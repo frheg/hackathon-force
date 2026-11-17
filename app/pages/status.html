@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Connections</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<header class="top">
+  <a class="home" href="../">Sketches</a>
+  <h1>Connections</h1>
+  <span class="sub">What the pod can reach</span>
+</header>
+<main>
+  <div class="card table-wrap"><table id="s"><tr><td>checking...</td></tr></table></div>
+</main>
+<script>
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+fetch('api').then((r) => r.json()).then((s) => {
+  document.getElementById('s').innerHTML = Object.entries(s).map(([k, v]) =>
+    `<tr><td>${esc(k)}</td><td class="${v.ok ? 'ok' : 'error'}">${v.ok ? 'ok' : 'failed'}</td><td>${esc(v.detail)}</td></tr>`).join('')
+})
+</script>
+</body>
+</html>

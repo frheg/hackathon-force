@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hackathon sketches</title>
+<link rel="stylesheet" href="style.css" />
+<style>
+  .sketch h2 { font-size: 1.1rem; }
+  .sketch .data { font-size: 0.82rem; color: var(--muted); }
+  .sketch a.open { display: inline-block; margin-top: 0.4rem; font-weight: 600; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Three sketches of an oil and gas app</h1>
+  <span class="sub">FORCE VibeCode Hackathon, Stavanger, 19 to 20 November 2026</span>
+</header>
+<main>
+  <div class="grid">
+    <div class="card sketch">
+      <h2>NCS Copilot</h2>
+      <p>Ask about the Norwegian shelf in plain words. The model writes SQL over Sodir's FactPages, the server runs it
+        read-only, and you get the answer, the table, the query and a map of the wells.</p>
+      <p class="data">Data: Sodir FactPages (fields, wellbores, discoveries, licences, monthly production, reserves).</p>
+      <a class="open" href="copilot/">Open NCS Copilot</a>
+    </div>
+    <div class="card sketch">
+      <h2>Log Lens</h2>
+      <p>Well logs next to the lithology, as interpreted and as predicted by a model trained on 98 other wells.
+        Zoom to an interval and the model explains it like a petrophysicist.</p>
+      <p class="data">Data: FORCE 2020 lithology competition (CC BY 4.0), shown on the 10 wells held out from training.</p>
+      <a class="open" href="logs/">Open Log Lens</a>
+    </div>
+    <div class="card sketch">
+      <h2>Field Pulse</h2>
+      <p>A field's monthly production, a decline curve fitted from a month you pick, and its forecast against
+        Sodir's remaining reserves. The model writes a field brief from the numbers and Sodir's description.</p>
+      <p class="data">Data: Sodir FactPages monthly production, reserves and field descriptions.</p>
+      <a class="open" href="decline/">Open Field Pulse</a>
+    </div>
+  </div>
+  <div class="card small">
+    <h2>Built on</h2>
+    <p class="muted">Ideas from earlier work: the
+      <a href="https://github.com/bolgebrygg/Force-2020-Machine-Learning-competition">FORCE 2020 lithology competition</a>
+      (329 teams; Log Lens uses its data and score), the
+      <a href="https://agilescientific.com/blog/2018/9/27/force-ml-hackathon-project-round-up">FORCE ML hackathon projects</a>,
+      and text-to-SQL assistants for well data such as
+      <a href="https://ai.slb.com/blog/drilling-genai-optimization">SLB's drilling work</a> and
+      <a href="https://aws.amazon.com/blogs/industries/how-bpx-energy-uses-amazon-bedrock-to-transform-oil-and-gas-production-insights">bpx energy's Xpert</a>.
+      The model runs locally; <a href="status/">connection status</a>.</p>
+  </div>
+</main>
+</body>
+</html>

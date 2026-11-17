@@ -1,0 +1,28 @@
+# datasets and what is built from them: fetched again with app/fetch_data.py (see README)
+data/
+*.duckdb
+*.duckdb.wal
+*.parquet
+*.joblib
+*.npy
+*.csv
+*.zip
+*.part
+
+# Python and Node
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+
+# local settings and secrets (Azure keys from the event and the like)
+.env
+.env.*
+!.env.example
+
+# editors
+.DS_Store
+.idea/
+.vscode/
