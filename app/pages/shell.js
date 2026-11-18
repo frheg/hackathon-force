@@ -45,7 +45,7 @@
         .join('')
       side.innerHTML = `
         <a class="brand" href="${root}/"><span class="brand-mark"></span><span><b>Subsurface Studio</b></span></a>
-        <nav class="nav"><a href="${root}/" class="${current ? '' : 'on'}">Overview</a></nav>
+        <nav class="nav"><a href="${root}/" class="${current ? '' : 'on'}">Overview</a><a href="${root}/atlas/">Data Atlas</a></nav>
         ${nav}
         <div class="side-foot"><label class="field">Language model<select id="model-pick"></select></label>
           <p style="margin:.6rem 0 0">FORCE VibeCode Hackathon<br />Stavanger, November 2026<br /><a href="${root}/status/">Connections</a></p></div>`

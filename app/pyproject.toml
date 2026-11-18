@@ -13,6 +13,10 @@ dependencies = [
     "numpy>=2.3",
     "scipy>=1.16",
     "scikit-learn>=1.7",
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0.2",
+    "lasio>=0.32",
+    "segyio>=1.9.15",
 ]
 
 [tool.uv]

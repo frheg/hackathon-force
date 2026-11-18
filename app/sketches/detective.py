@@ -67,7 +67,8 @@ SYSTEM = """You answer questions about Norwegian Continental Shelf wells from ev
 Use the tools: search_reports for what the reports say, wellbore_facts for official FactPages numbers,
 nearby_wellbores for neighbours. Call tools until you have the evidence, then answer in a few sentences.
 Cite every claim: [S3] for a report passage, [F:tops], [F:casing], [F:dst], [F:mud], [F:cores], [F:history] or
-[F:wellbore] for FactPages. If the evidence does not answer the question, say so. Never invent numbers."""
+[F:wellbore] for FactPages. Read each passage to the end. Give what the evidence says even if it answers only part
+of the question; say the evidence is missing only when nothing bears on it. Never invent numbers."""
 
 
 class Session:
@@ -97,7 +98,7 @@ class Session:
             }
             mode = "filtered" if any(ents.values()) else "hybrid"
             found = self.add(await reports.search(args.get("query", ""), k=5, mode=mode, ents=ents if any(ents.values()) else None))
-            result = "\n\n".join(f"[{p['ref']}] ({p['document']}; {', '.join(p['wellbores'])}) {p['text'][:1800]}" for p in found)
+            result = "\n\n".join(f"[{p['ref']}] ({p['document']}; {', '.join(p['wellbores'])}) {p['text']}" for p in found)
         elif name == "wellbore_facts":
             c = wells.card(args.get("wellbore", ""))
             result = wells.facts_text(c) if c["header"] else f"no wellbore named {args.get('wellbore')} in FactPages"
@@ -132,7 +133,7 @@ async def agent(question: str) -> dict:
             except json.JSONDecodeError:
                 args = {}
             result = await s.run(call["function"]["name"], args)
-            messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": result[:12000]})
+            messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": result[:30000]})
     messages.append({"role": "user", "content": "Answer now from the evidence you have, with citations."})
     answer = await chat(messages, max_tokens=900)
     return {"answer": answer, "sources": s.passages, "trace": s.trace, "seconds": round(time.time() - t0, 1)}
@@ -142,10 +143,12 @@ async def rag(question: str, mode: str) -> dict:
     """One-shot retrieval and answer (the scorecard's configurations); mode 'closed' answers without evidence."""
     t0 = time.time()
     found = [] if mode == "closed" else await reports.search(question, k=5, mode=mode)
-    context = "\n\n".join(f"[{p['ref']}] ({p['document']}) {p['text'][:2000]}" for p in found)
+    context = "\n\n".join(f"[{p['ref']}] ({p['document']}) {p['text']}" for p in found)
     sys = (
         "Answer the question about Norwegian wells in one to three sentences. "
-        + ("Use only the passages and cite them like [S2]. If they do not answer it, say so." if found else "Answer from what you know.")
+        + ("Use only the passages and cite them like [S2]. Read every passage to the end; the answer is often in a "
+           "detail. Give what the passages do say, even if it answers only part of the question; say the evidence is "
+           "missing only when no passage bears on it." if found else "Answer from what you know.")
     )
     answer = await chat(
         [{"role": "system", "content": sys}, {"role": "user", "content": (f"Passages:\n{context}\n\n" if found else "") + f"Question: {question}"}],
@@ -249,7 +252,7 @@ class Check(BaseModel):
 
 @router.post("/api/verify")
 async def verify(b: Check):
-    texts = {s.get("ref"): str(s.get("text", ""))[:1800] for s in b.sources}
+    texts = {s.get("ref"): str(s.get("text", ""))[:5000] for s in b.sources}
     claims = []
     for s in sentences(b.answer):
         refs = re.findall(r"\[(S\d+)\]", s)

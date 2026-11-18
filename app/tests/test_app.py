@@ -199,3 +199,31 @@ def test_scorecard_sample_keeps_topic(monkeypatch):
 
     out = asyncio.run(scorecard.answers(8, ["closed"]))
     assert out["answers"]["closed"]["n"] >= 8 and out["answers"]["closed"]["by_topic"]
+
+
+# -- the Data Atlas --
+
+
+def test_atlas_safe_drops_nan():
+    from sketches import atlas
+
+    assert atlas.safe({"a": [1.0, float("nan")], "b": float("inf")}) == {"a": [1.0, None], "b": None}
+
+
+def test_atlas_catalog_splits_origins():
+    d = client.get("/atlas/api/catalog").json()["datasets"]
+    assert {x["origin"] for x in d} == {"mail", "earlier"}
+    assert next(x for x in d if x["id"] == "completion")["path"] == "official/completion_reports"
+
+
+def test_atlas_well_joins_datasets():
+    w = client.get("/atlas/api/well/15/9-13").json()
+    assert w["name"] == "15/9-13"
+    assert w["in"]["logs"] and w["in"]["realpore"]
+    assert len(w["plugs"]["md"]) > 100 and len(w["tops"]) > 5
+    assert client.get("/atlas/api/well/not-a-well").status_code == 404
+
+
+def test_atlas_reserves_use_latest_estimate():
+    k = client.get("/atlas/api/profile/factpages").json()["kpis"]
+    assert 1000 < k["remaining_oe"] < 5000  # summing every yearly estimate gives about 67,000

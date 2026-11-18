@@ -22,6 +22,7 @@ report), [docs/research_notes](docs/research_notes/), [docs/research.md](docs/re
 | `logs/` | **Log Lens** | Lithology from logs on 10 unseen wells, explained interval by interval | 79.5 % accuracy, competition score -0.513 (winner -0.47) |
 | `decline/` | **Field Pulse** | Production, Arps decline from a chosen month, forecast against Sodir's remaining reserves, a field brief | |
 | `status/` | Connections | what the app can reach | |
+| `atlas/` | **Data Atlas** | A dashboard over every dataset, for learning the data: what each holds, key numbers, charts with a line on how to read them, sample records, how the datasets join, a well lookup across all of them, and a glossary of 107 terms | |
 
 Guard rails: the SQL runs read-only with file and network access off; every model answer cites FactPages tables
 (`[F:tops]`) or report passages (`[S3]`); the model never reads seismic images, only numbers; wells and fields are
@@ -29,15 +30,33 @@ matched by a name normaliser; every request has input limits; model errors and a
 
 ## Data
 
-About 1.9 GB in `data/`, not in git. Everything is public:
+About 125 GB in `data/`, not in git. Everything is public. The datasets the organisers sent by mail (17 November
+2026) are kept apart in `data/official/`, as the most official source; the ones found before the event stay in
+`data/`.
+
+**From the organisers** (`data/official/`, all CC BY 4.0, Zenodo):
+
+| Folder | Dataset | Size | Fetch |
+|---|---|---|---|
+| `completion_reports/` | 4,462 NCS wellbore completion reports, PDF and JSON, plus Diskos metadata ([24320092](https://doi.org/10.5281/zenodo.24320092)) | 112 GB, unpacked from four tar parts | `fetch_data.py completion` |
+| `text/` | OCR text of Norwegian (Diskos, relinquishment), UK and Dutch reports, page by page, with 1,368 hand-labelled pages ([10775273](https://zenodo.org/records/10775273)) | 6.1 GB | `fetch_data.py text` |
+| `realpore/` | Core porosity, permeability and rock type, 372,930 plugs from 1,240 wells; credit GeoProvider, http://geoprovider.no/ ([4723018](https://zenodo.org/records/4723018)) | 45 MB | `fetch_data.py realpore` |
+| `force2020/` | FORCE 2020 wells as LAS, casing depths and lithostratigraphy sheets ([4351156](https://zenodo.org/records/4351156)) | 170 MB | `fetch_data.py force2020_las` |
+| `adele/` | Adele 3D seismic, NW Australia, SEG-Y; credit Geoscience Australia ([4299758](https://zenodo.org/records/4299758)) | 3.5 GB | `fetch_data.py adele` |
+| `ksat/` | KSAT satellite radar for seep detection, handed out at the event | 2.1 GB | copy in by hand |
+
+**Found before the event** (`data/`):
 
 | Source | Licence | Fetch |
 |---|---|---|
 | Sodir FactPages: 22 tables (fields, wellbores, tops, casing and LOT, mud, DST, cores, drilling histories, documents, facilities, production, reserves, discoveries) | NLOD 2.0 | `fetch_data.py sodir` |
-| FORCE 2020 lithology well logs (98 + 10 wells) | CC BY 4.0 | `fetch_data.py force2020` |
+| FORCE 2020 lithology well logs as CSV (98 + 10 wells; the same wells as the mail's LAS) | CC BY 4.0 | `fetch_data.py force2020` |
 | DISKOS-QA (1,027 questions over 1,690 Diskos report passages) | NLOD 2.0 | `fetch_data.py diskosqa` |
 | Volve daily drilling reports (1,759, WITSML) | CC BY 4.0 (Hugging Face copy) | `fetch_data.py volve` |
 | F3 Netherlands seismic with facies labels (stand-in for NCS seismic) | CC BY 4.0 | `fetch_data.py seismic` |
+
+Zenodo serves each connection at 2 to 3 MB/s, so large files come down as 64 MB pieces over ten connections
+(about 20 MB/s); an interrupted download resumes, and every file is checked against Zenodo's md5.
 
 ## Build and run
 
@@ -48,6 +67,7 @@ From `app/`, once:
     uv run python -m sketches.train_logs        # lithology model, about a minute
     uv run python -m sketches.seismic           # seismic index and its scores, about a minute
     uv run python -m sketches.scorecard retrieval   # DISKOS-QA retrieval scores, a few minutes
+    uv run python -m sketches.atlas             # the Data Atlas profiles (data/atlas/), about a minute
 
 Then:
 
@@ -78,10 +98,11 @@ The answer scorecard (GPU time, about four model calls per question per mode):
     app/common.py          model calls (retries, JSON schemas), embeddings, the FactPages database, wellbore lookups
     app/fetch_data.py      downloads the data
     app/sketches/          one module per tool, plus reports.py (search), wells.py (well facts), scorecard.py,
-                           train_logs.py
+                           train_logs.py, atlas.py (the data dashboard and its profiles)
     app/pages/             one HTML page per tool, style.css and shell.js shared (plain JS; Plotly and Leaflet)
     app/tests/             pytest
-    data/                  datasets, indexes and caches (ignored by git)
+    data/                  datasets found before the event, indexes and caches (ignored by git)
+    data/official/         the datasets the organisers sent
     docs/                  research, the report, model notes
 
 ## Swapping in the event's data

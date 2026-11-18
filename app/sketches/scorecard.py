@@ -130,7 +130,9 @@ async def main():
     if a.part == "retrieval":
         data["retrieval"] = await retrieval()
     else:
-        data.update(await answers(a.n, a.modes.split(",")))
+        new = await answers(a.n, a.modes.split(","))  # merge by mode, so a rerun of some modes keeps the others
+        data["answers"] = {**data.get("answers", {}), **new["answers"]}
+        data["examples"] = [e for e in data.get("examples", []) if e["mode"] not in new["answers"]] + new["examples"]
         data["model"] = current_model()
     data["updated"] = date.today().isoformat()
     data["corpus"] = {"passages": len(reports.corpus()[0]), "questions_supported": int(len(load()))}

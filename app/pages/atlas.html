@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Data Atlas</title>
+<link rel="stylesheet" href="../style.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  /* chart series: the validated categorical order, stepped per mode */
+  :root { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --s0: #6d6d77; }
+  @media (prefers-color-scheme: light) {
+    :root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948; --s0: #9a9aa3; }
+  }
+  .term { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; cursor: help; }
+  .tip { position: fixed; z-index: 60; max-width: 340px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; font-size: 0.8rem; line-height: 1.5; box-shadow: 0 8px 28px rgba(0,0,0,.35); pointer-events: none; }
+  .tip b { display: block; margin-bottom: 0.15rem; }
+  .plain { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 0.9rem 1.1rem; display: grid; gap: 0.9rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .plain h3 { font-size: 0.76rem; color: var(--muted); font-weight: 500; margin-bottom: 0.25rem; }
+  .plain p { margin: 0; color: var(--ink-2); font-size: 0.86rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem; font-size: 0.78rem; color: var(--muted); margin-top: 0.55rem; }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+  .kpi .k { line-height: 1.35; }
+  .kpi .v { overflow-wrap: anywhere; }
+  .kpi.txt .v { font-size: 0.95rem; line-height: 1.35; padding-top: 0.2rem; }
+  .cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+  .card { display: block; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 0.9rem 1rem; text-decoration: none; color: var(--ink); }
+  .card:hover { border-color: var(--line-2); background: var(--panel-2); }
+  .card h3 { font-size: 0.92rem; font-weight: 500; display: flex; justify-content: space-between; gap: 0.5rem; }
+  .card p { color: var(--ink-2); font-size: 0.82rem; margin: 0.4rem 0 0.6rem; }
+  .card .row { font-size: 0.76rem; color: var(--muted); gap: 0.4rem 0.9rem; }
+  .how { color: var(--muted); font-size: 0.78rem; margin: 0.5rem 0 0; }
+  .terms { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+  .gloss > div { padding: 0.55rem 0.9rem; border-top: 1px solid var(--line); font-size: 0.85rem; }
+  .gloss > div:nth-child(-n+2) { border-top: 0; }
+  .gloss .t { font-weight: 500; }
+  .gloss .d { color: var(--ink-2); }
+  .gloss .c { display: block; color: var(--muted); font-size: 0.74rem; }
+  .sample { font: 0.78rem/1.55 var(--mono); white-space: pre-wrap; max-height: 260px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.6rem 0.7rem; color: var(--ink-2); }
+  .qa { border-top: 1px solid var(--line); padding: 0.8rem 0; }
+  .qa:first-child { border-top: 0; padding-top: 0; }
+  .qa .q { font-weight: 500; }
+  .qa .a { color: var(--ink-2); margin: 0.25rem 0 0.4rem; }
+  .pres { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .canvas-wrap { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg); }
+  .canvas-wrap canvas { width: 100%; height: 420px; display: block; image-rendering: auto; }
+  .side .nav a { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+  .side .nav .count { color: var(--muted); font-size: 0.7rem; white-space: nowrap; flex: none; }
+  .side .nav .count.busy { color: var(--amber); }
+  @media (max-width: 1100px) { .plain { grid-template-columns: 1fr; } .gloss { grid-template-columns: 1fr; } .gloss > div:nth-child(2) { border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side" id="side"></aside>
+  <div class="content"><main class="page" id="view"></main></div>
+</div>
+<button class="menu-btn" onclick="document.getElementById('side').classList.toggle('open')">Menu</button>
+<div class="tip" id="tip" hidden></div>
+<script src="../atlas.js"></script>
+</body>
+</html>
