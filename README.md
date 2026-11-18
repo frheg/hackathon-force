@@ -5,7 +5,7 @@ favourite oil and gas app in 2 days"). Each tool takes one slow, expensive task 
 late life, runs it on public Norwegian Continental Shelf data, and uses a language model only where reading,
 cross-checking or writing is the bottleneck. Research behind the choices: [docs/reports](docs/reports/) (the ranked
 report), [docs/research_notes](docs/research_notes/), [docs/research.md](docs/research.md) (the event) and
-[docs/oil-gas-llms.md](docs/oil-gas-llms.md) (domain models and GPU profiles).
+[docs/oil-gas-llms.md](docs/oil-gas-llms.md) (domain models and GPU profiles) and [docs/data-guide.md](docs/data-guide.md) (every dataset and term explained).
 
 ## The tools
 
