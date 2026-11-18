@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lost Time Hunter</title>
+<link rel="stylesheet" href="../style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+</head>
+<body data-app="losttime" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Drill and complete</div>
+      <h1>Lost Time Hunter</h1>
+      <p class="lede">Where the rig time went in Volve's 1,759 daily drilling reports: reported non-productive time,
+        invisible lost time from drilling slower than the field's own P75 rate, and hidden NPT the model finds in lines
+        logged as normal. Then ask what went wrong, and get the lessons with the report lines cited.</p>
+    </div>
+    <span class="value-pill">Goes after <b>rig days at USD 250–400k each</b></span>
+  </div>
+
+  <div class="panel">
+    <div class="row end">
+      <label class="field">Rig day rate (USD)<input id="rate" type="number" value="300000" step="10000" style="width: 9rem" /></label>
+      <span class="muted small grow">Rig rates differ by rig and year: NCS semi-subs run about USD 400k a day in 2025–26, jack-ups less. Set the rate for the case you want to price.</span>
+    </div>
+  </div>
+  <div class="kpis" id="kpis" style="margin-top: 1rem"></div>
+
+  <div class="grid g2" style="margin-top: 1rem">
+    <div class="panel">
+      <div class="panel-head"><h2>Reported NPT by cause, all wells</h2><span class="hint">days</span></div>
+      <div id="causes" class="chart" style="height: 340px"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Wellbores</h2><span class="hint">click one</span></div>
+      <div class="table-wrap" style="max-height: 340px"><table id="wells"></table></div>
+    </div>
+  </div>
+
+  <div id="detail" hidden style="margin-top: 1rem">
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><h2 id="wtitle"></h2>
+          <div class="row"><span class="hint" id="wscan"></span><button class="btn ghost" id="scan">Find hidden NPT</button></div></div>
+        <div class="kpis" id="wkpis"></div>
+        <div id="tvd" class="chart" style="height: 460px; margin-top: .6rem"></div>
+        <div id="sstate"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Lost-time events</h2><div class="seg" id="kind"><button class="on" data-k="">All</button><button data-k="reported">Reported</button><button data-k="hidden">Hidden</button><button data-k="slow drilling">Slow</button></div></div>
+        <div class="table-wrap" style="max-height: 480px"><table id="events"></table></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 1rem">
+    <div class="panel-head"><h2>Lessons learned</h2><span class="hint">searches the problem lines of every report</span></div>
+    <form id="lf" class="row end"><input id="lq" class="grow" placeholder="What went wrong when running casing, and how was it fixed?" /><button class="btn" id="lgo">Ask</button></form>
+    <div class="chips" id="lex" style="margin-top: .6rem"></div>
+    <div id="lstate" style="margin-top: .6rem"></div>
+    <div class="split" style="margin-top: .8rem">
+      <div class="prose" id="ltext"></div>
+      <div class="table-wrap" style="max-height: 360px"><table id="llines"></table></div>
+    </div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, css } = window.studio
+const $ = (id) => document.getElementById(id)
+let overview, detail, kind = ''
+const usd = (days) => '$' + num((days * +$('rate').value) / 1e6, 1) + 'M'
+
+async function load() {
+  overview = await call('api/overview')
+  renderTotals()
+  const c = overview.npt_by_cause, keys = Object.keys(c)
+  Plotly.react('causes', [{ type: 'bar', orientation: 'h', y: keys, x: keys.map((k) => c[k]), marker: { color: css('--red') } }],
+    plotLayout({ margin: { l: 140, r: 20, t: 10, b: 36 }, yaxis: { autorange: 'reversed' }, xaxis: { title: { text: 'days' } } }), plotConfig)
+  $('wells').innerHTML = '<tr><th>Wellbore</th><th class="num">Days</th><th class="num">NPT</th><th class="num">Slow</th><th class="num">Hidden</th></tr>' +
+    overview.wellbores.map((w) => `<tr data-w="${esc(w.wellbore)}" style="cursor:pointer"><td>${esc(w.wellbore)}<div class="small muted">from ${w.start}</div></td><td class="num">${w.days}</td><td class="num">${w.npt_days}</td><td class="num">${w.ilt_days}</td><td class="num">${w.scanned ? w.hidden_days : '–'}</td></tr>`).join('')
+}
+function renderTotals() {
+  const t = overview.total
+  $('kpis').innerHTML = [
+    [num(t.days, 0), `rig days in ${num(t.reports, 0)} reports`], [num(t.npt_days, 0), `reported NPT days · ${usd(t.npt_days)}`, 'bad'],
+    [num(t.ilt_days, 0), `invisible lost time days · ${usd(t.ilt_days)}`, 'warn'], [t.hidden_days ? num(t.hidden_days, 1) : '–', `hidden NPT days found so far · ${usd(t.hidden_days)}`, 'warn'],
+    [Math.round(((t.npt_days + t.ilt_days + t.hidden_days) / t.days) * 100) + '%', 'of rig time lost'],
+  ].map(([v, k, c]) => `<div class="kpi ${c || ''}"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('')
+}
+$('rate').oninput = () => { if (overview) renderTotals(); if (detail) renderDetail() }
+$('wells').onclick = (e) => { const tr = e.target.closest('tr[data-w]'); if (tr) open(tr.dataset.w) }
+load().then(() => open(overview.wellbores[0].wellbore))
+
+async function open(w) {
+  detail = await call(`api/wellbore/${encodeURIComponent(w)}`)
+  document.querySelectorAll('#wells tr').forEach((tr) => tr.classList.toggle('sel', tr.dataset.w === w))
+  $('detail').hidden = false
+  renderDetail()
+}
+function renderDetail() {
+  const d = detail, s = d.summary
+  $('wtitle').textContent = d.wellbore
+  $('wscan').textContent = d.scanned ? 'scanned' : ''
+  $('wkpis').innerHTML = [[s.days, 'days'], [s.npt_days, `NPT · ${usd(s.npt_days)}`, 'bad'], [s.ilt_days, `slow drilling · ${usd(s.ilt_days)}`, 'warn'], [d.scanned ? s.hidden_days : '–', `hidden · ${usd(s.hidden_days)}`, 'warn']]
+    .map(([v, k, c]) => `<div class="kpi ${c || ''}"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('')
+  const c = d.curve
+  const ev = d.events
+  const colors = { reported: css('--red'), hidden: css('--amber'), 'slow drilling': css('--violet') }
+  Plotly.react('tvd', [
+    { x: c.day, y: c.md, mode: 'lines', line: { color: css('--accent'), width: 2 }, name: 'depth' },
+    ...Object.keys(colors).map((k) => { const e = ev.filter((x) => x.kind === k && x.md); return { x: e.map((x) => x.day), y: e.map((x) => x.md), mode: 'markers', name: k, marker: { color: colors[k], size: e.map((x) => 5 + Math.min(14, (x.hours + x.ilt) * 1.2)), opacity: 0.75 }, text: e.map((x) => `${x.code} · ${x.hours} h<br>${esc((x.comment || '').slice(0, 120))}`), hovertemplate: '%{text}<extra></extra>' } }),
+  ], plotLayout({ margin: { l: 60, r: 10, t: 30, b: 40 }, xaxis: { title: { text: 'days since spud' } }, yaxis: { autorange: 'reversed', title: { text: 'MD (m)' } } }), plotConfig)
+  renderEvents()
+}
+$('kind').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; kind = b.dataset.k; $('kind').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); renderEvents() }
+function renderEvents() {
+  const ev = detail.events.filter((x) => !kind || x.kind === kind)
+  const tag = { reported: 'red', hidden: 'amber', 'slow drilling': 'blue' }
+  $('events').innerHTML = '<tr><th>When</th><th>Kind</th><th class="num">h</th><th>Code</th><th>Comment</th></tr>' +
+    ev.map((x) => `<tr><td>${esc(x.date)}<div class="small muted">${x.md ? num(x.md, 0) + ' m' : ''}</div></td><td><span class="tag ${tag[x.kind]}">${esc(x.kind)}</span>${x.cause ? `<div class="small muted">${esc(x.cause)}</div>` : ''}</td><td class="num">${x.kind === 'slow drilling' ? x.ilt : x.hours}</td><td class="small">${esc(x.code)}</td><td class="small" style="white-space:normal;min-width:260px">${esc(x.comment || '')}</td></tr>`).join('')
+}
+$('scan').onclick = async () => {
+  const r = await busy($('scan'), $('sstate'), 'Reading the lines logged as normal (about 25 per model call)', () => call(`api/scan/${encodeURIComponent(detail.wellbore)}`, {})).catch(() => null)
+  if (!r) return
+  $('sstate').innerHTML = `<div class="callout small">${r.hidden} of ${r.scanned} suspect lines hide NPT: ${r.hours} hours.</div>`
+  await load(); open(detail.wellbore)
+}
+
+const lex = ['What went wrong when running casing, and how was it fixed?', 'Which problems happened during plug and abandonment?', 'What caused losses and how were they cured?', 'When did tight hole or overpull happen, and in which sections?']
+$('lex').innerHTML = lex.map((x) => `<button class="chip" type="button">${esc(x)}</button>`).join('')
+$('lex').onclick = (e) => { if (e.target.matches('.chip')) { $('lq').value = e.target.textContent; ask() } }
+$('lf').onsubmit = (e) => { e.preventDefault(); ask() }
+async function ask() {
+  const q = $('lq').value.trim(); if (!q) return
+  const d = await busy($('lgo'), $('lstate'), 'Searching the reports and writing the lessons', () => call('api/lessons', { q })).catch(() => null)
+  if (!d) return
+  $('ltext').innerHTML = esc(d.text).replace(/\[([^\]]+ \d{4}-\d\d-\d\d)\]/g, '<span class="tag blue">$1</span>')
+  $('llines').innerHTML = '<tr><th>Report</th><th>Code</th><th class="num">h</th><th>Comment</th></tr>' + d.lines.map((x) => `<tr><td>${esc(x.wellbore)}<div class="small muted">${x.date}</div></td><td class="small">${esc(x.code)}</td><td class="num">${x.hours}</td><td class="small" style="white-space:normal;min-width:240px">${esc(x.comment || '')}</td></tr>`).join('')
+}
+</script>
+</body>
+</html>

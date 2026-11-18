@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Data Doctor</title>
+<link rel="stylesheet" href="../style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+</head>
+<body data-app="doctor" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Data and knowledge</div>
+      <h1>Data Doctor</h1>
+      <p class="lede">Do the sources agree? The FORCE 2020 log files against Sodir's FactPages: position, depth range
+        and every formation top, with systematic shifts spotted (an offset the size of the KB elevation means two depth
+        references were mixed). For wellbores with report passages, the model reads what the reports state and checks
+        that too. Every wellbore gets a trust score the other apps can show.</p>
+    </div>
+    <span class="value-pill">Goes after <b>wrong inputs in every decision downstream</b></span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="split" style="margin-top: 1rem">
+    <div class="panel">
+      <div class="panel-head"><h2>Wells by trust score</h2><span class="hint">click one</span></div>
+      <div class="table-wrap" style="max-height: 560px"><table id="wells"></table></div>
+    </div>
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><h2>Issues found, by kind</h2></div>
+        <div id="kinds" class="chart" style="height: 240px"></div>
+      </div>
+      <div class="panel" id="wp" hidden>
+        <div class="panel-head"><h2 id="wtitle"></h2><span class="hint" id="wmeta"></span></div>
+        <div id="issues"></div>
+        <div id="tops" class="chart" style="height: 300px; margin-top: .6rem"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 1rem">
+    <div class="panel-head"><h2>Reports against FactPages</h2><span class="hint">the model extracts what the passages state (cached per wellbore)</span></div>
+    <div class="row end">
+      <label class="field grow">Wellbore with report passages<input id="rw" list="rwl" placeholder="9/2-1" /></label>
+      <datalist id="rwl"></datalist>
+      <button class="btn" id="rgo">Check</button>
+    </div>
+    <div id="rstate" style="margin-top: .6rem"></div>
+    <div class="table-wrap" style="margin-top: .8rem" id="rwrap" hidden><table id="rt"></table></div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, css } = window.studio
+const $ = (id) => document.getElementById(id)
+const sev = { high: 'red', medium: 'amber', low: 'blue', none: 'green' }
+
+call('api/audit').then((d) => {
+  const n = d.wells.length
+  const bad = d.wells.filter((w) => w.worst === 'high').length
+  $('kpis').innerHTML = [[n, 'FORCE 2020 wells checked'], [d.clean, 'fully consistent', 'good'], [bad, 'with a high-severity conflict', 'bad'],
+    [d.wells.filter((w) => w.kinds.includes('position')).length, 'positions off by more than 250 m', 'warn'], [d.report_wellbores, 'wellbores with report passages']]
+    .map(([v, k, c]) => `<div class="kpi ${c || ''}"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('')
+  const ws = [...d.wells].sort((a, b) => a.score - b.score)
+  $('wells').innerHTML = '<tr><th>Well</th><th>Trust</th><th>Issues</th><th class="num">Pos. (m)</th><th class="num">Shift (m)</th></tr>' + ws.map((w) => `
+    <tr data-w="${esc(w.well)}" style="cursor:pointer"><td>${esc(w.well)}</td>
+    <td><div class="row" style="gap:.5rem"><div class="bar" style="width:70px"><span style="width:${w.score}%"></span></div>${w.score}</div></td>
+    <td>${w.kinds.map((k) => `<span class="tag ${sev[w.worst]}">${esc(k)}</span>`).join(' ')}</td>
+    <td class="num">${w.position_m ?? '–'}</td><td class="num">${w.median_shift == null ? '–' : num(w.median_shift, 0)}</td></tr>`).join('')
+  $('wells').onclick = (e) => { const tr = e.target.closest('tr[data-w]'); if (tr) open(tr.dataset.w) }
+  const k = d.kinds, keys = Object.keys(k).sort((a, b) => k[b] - k[a])
+  Plotly.react('kinds', [{ type: 'bar', orientation: 'h', y: keys, x: keys.map((x) => k[x]), marker: { color: css('--amber') } }],
+    plotLayout({ margin: { l: 120, r: 10, t: 10, b: 30 }, yaxis: { autorange: 'reversed' }, xaxis: { title: { text: 'wells' } } }), plotConfig)
+  $('rwl').innerHTML = d.report_wells.map((w) => `<option value="${esc(w)}">`).join('')
+  open(ws.find((w) => w.matched)?.well || ws[0].well)
+})
+
+async function open(name) {
+  const r = await call(`api/well/${encodeURIComponent(name)}`)
+  document.querySelectorAll('#wells tr').forEach((tr) => tr.classList.toggle('sel', tr.dataset.w === name))
+  $('wp').hidden = false
+  $('wtitle').textContent = `${r.well}${r.matched && r.matched !== r.well ? ' → ' + r.matched : ''} · trust ${r.score}`
+  $('wmeta').textContent = r.td ? `TD ${num(r.td, 0)} m · logs to ${num(r.log_base, 0)} m · KB ${r.kb ?? '–'} m` : ''
+  $('issues').innerHTML = r.issues.length ? r.issues.map((i) => `<div class="callout ${i.severity === 'high' ? 'err' : 'warn'} small" style="margin-top:.4rem"><b>${esc(i.kind)}</b> · ${esc(i.text)}</div>`).join('') : '<div class="callout small">No conflicts: the log file and FactPages agree.</div>'
+  const t = r.tops.filter((x) => x.diff != null)
+  Plotly.react('tops', [{ type: 'bar', orientation: 'h', y: t.map((x) => x.unit), x: t.map((x) => x.diff), marker: { color: t.map((x) => Math.abs(x.diff) > 20 ? css('--red') : css('--accent')) }, text: t.map((x) => `log ${x.log_top} m · FactPages ${x.fp_top} m`), hovertemplate: '%{y}: %{x} m<br>%{text}<extra></extra>' }],
+    plotLayout({ margin: { l: 150, r: 10, t: 10, b: 36 }, yaxis: { autorange: 'reversed', tickfont: { size: 10 } }, xaxis: { title: { text: 'log top minus FactPages top (m)' }, zeroline: true } }), plotConfig)
+}
+
+$('rgo').onclick = async () => {
+  const w = $('rw').value.trim(); if (!w) return
+  const d = await busy($('rgo'), $('rstate'), 'Reading the report passages', () => call(`api/reports/${encodeURIComponent(w)}`, {})).catch(() => null)
+  if (!d) return
+  $('rwrap').hidden = false
+  const mark = (a) => a === true ? '<span class="tag green">agrees</span>' : a === false ? '<span class="tag red">conflict</span>' : '<span class="tag">not comparable</span>'
+  $('rt').innerHTML = '<tr><th>Fact</th><th>Reports say</th><th>FactPages</th><th></th><th>Source</th><th>Quote</th></tr>' + d.facts.map((f) => `<tr><td>${esc(f.field)}</td><td>${esc(f.value)}</td><td>${esc(f.factpages ?? '–')}</td><td>${mark(f.agree)}</td><td>${esc(f.source)} ${esc((d.sources.find((s) => s.ref === f.source.replace(/[\[\]]/g, '')) || {}).document || '')}</td><td class="small" style="white-space:normal;min-width:240px">${esc(f.quote)}</td></tr>`).join('')
+}
+</script>
+</body>
+</html>

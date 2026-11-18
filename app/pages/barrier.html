@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Barrier Ledger</title>
+<link rel="stylesheet" href="../style.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+</head>
+<body data-app="barrier" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Late life and CO2</div>
+      <h1>Barrier Ledger</h1>
+      <p class="lede">Legacy wells around a CO₂ store, or any area, laid out for a plugging or storage decision:
+        do they cross the seal and the reservoir, is casing across the seal, when and how were they abandoned. Three
+        published-style screening schemes run side by side, and the app shows where they disagree and which missing
+        fact causes it. Click a well for its barrier picture, extracted from its history and reports with citations.</p>
+    </div>
+    <span class="value-pill">Goes after <b>NOK 50M–1bn per P&A · GBP 25–30M per CO₂ re-entry</b></span>
+  </div>
+
+  <div class="panel">
+    <div class="row end">
+      <label class="field">Site<select id="site"></select></label>
+      <label class="field">or centre wellbore<input id="center" placeholder="e.g. 31/5-7" style="width: 9rem" /></label>
+      <label class="field">Radius (km)<input id="radius" type="number" min="2" max="50" style="width: 6rem" /></label>
+      <label class="field grow">Seal units<input id="seal" placeholder="DRAKE FM" /></label>
+      <label class="field grow">Reservoir units<input id="res" placeholder="JOHANSEN FM, COOK FM" /></label>
+      <button class="btn" id="go">Screen</button>
+    </div>
+    <div id="state" style="margin-top: 0.6rem"></div>
+  </div>
+
+  <div class="kpis" id="kpis" style="margin-top: 1rem"></div>
+
+  <div class="split" style="margin-top: 1rem">
+    <div class="panel">
+      <div class="panel-head"><h2>Screening matrix</h2><span class="hint">three schemes; ⚠ where they disagree</span></div>
+      <div class="table-wrap" style="max-height: 520px"><table id="matrix"></table></div>
+      <p class="muted small" style="margin-top: .6rem"><b>Status and age</b>: open or temporarily abandoned wells, then abandonments before NORSOK D-010 rev 3 (2004) and before 1990.
+        <b>Barrier depth</b>: does casing reach below the seal where the well crosses it.
+        <b>Proximity</b>: reaches the storage unit within the likely plume (5 / 12 km).</p>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Map</h2><div class="legend"><span><i style="background:var(--red)"></i>high</span><span><i style="background:var(--amber)"></i>medium</span><span><i style="background:var(--green)"></i>low</span><span><i style="background:#94a3b8"></i>unknown</span></div></div>
+      <div id="map" class="map" style="height: 520px"></div>
+    </div>
+  </div>
+
+  <div id="well" hidden style="margin-top: 1rem">
+    <div class="split">
+      <div class="panel">
+        <div class="panel-head"><h2 id="wtitle"></h2><button class="btn" id="ledger">Read the well file</button></div>
+        <div id="wstate"></div>
+        <div class="prose" id="wtext"><span class="muted">The model extracts plugs, cement tops and the abandonment from the drilling history and Diskos passages, then writes the barrier picture with citations.</span></div>
+        <div class="table-wrap" id="plugs" style="margin-top: .8rem" hidden><table id="plugt"></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Well sketch</h2><span class="hint">formations, casing shoes, seal and reservoir, extracted plugs</span></div>
+        <div id="sketch" class="chart" style="height: 560px"></div>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, css } = window.studio
+const $ = (id) => document.getElementById(id)
+const COL = () => ({ high: css('--red'), medium: css('--amber'), low: css('--green'), unknown: '#94a3b8' })
+let data, map, layer, sel, sites
+
+call('api/sites').then((s) => {
+  sites = s
+  $('site').innerHTML = Object.entries(s).map(([k, v]) => `<option value="${k}">${esc(v.name)}</option>`).join('') + '<option value="">Custom (centre wellbore)</option>'
+  pickSite()
+  run()
+})
+$('site').onchange = pickSite
+$('go').onclick = run
+function pickSite() {
+  const s = sites[$('site').value]
+  if (!s) return
+  $('center').value = s.center; $('radius').value = s.radius
+  $('seal').value = s.seal.join(', '); $('res').value = s.reservoir.join(', ')
+}
+const list = (v) => v.split(',').map((x) => x.trim()).filter(Boolean)
+
+async function run() {
+  const body = { site: $('site').value || null, center: $('center').value.trim() || null, radius_km: +$('radius').value || null, seal: list($('seal').value), reservoir: list($('res').value) }
+  const d = await busy($('go'), $('state'), 'Screening the wells', () => call('api/screen', body)).catch(() => null)
+  if (!d) return
+  data = d
+  const t = d.totals
+  $('kpis').innerHTML = [
+    [t.wells, `wellbores within ${d.radius} km of ${d.center.name}`], [t.into_reservoir, 'reach the storage unit'],
+    [t.high, 'high in at least one scheme', 'bad'], [t.disagree, 'where the schemes disagree', 'warn'], [t.missing, 'with missing records'],
+  ].map(([v, k, c]) => `<div class="kpi ${c || ''}"><div class="v">${v}</div><div class="k">${esc(k)}</div></div>`).join('')
+  const c = COL()
+  const cell = (v) => `<td><span class="tag" style="color:${c[v]};border-color:${c[v]}">${v}</span></td>`
+  $('matrix').innerHTML = '<tr><th>Wellbore</th><th class="num">km</th><th>Status</th><th>Status and age</th><th>Barrier depth</th><th>Proximity</th><th></th></tr>' +
+    d.wells.map((w, i) => `<tr data-i="${i}" style="cursor:pointer"><td>${esc(w.name)}<div class="small muted">${esc(w.content || '')} · ${w.facts.abandon_year || '?'}${w.facts.penetration_estimated ? ' · est.' : ''}</div></td>
+      <td class="num">${w.km}</td><td>${esc(w.status || '–')}</td>${cell(w.schemes.status_age)}${cell(w.schemes.barrier_depth)}${cell(w.schemes.proximity)}
+      <td title="${esc(w.missing.join(', '))}">${w.disagree ? '⚠' : ''}</td></tr>`).join('')
+  $('matrix').onclick = (e) => { const tr = e.target.closest('tr[data-i]'); if (tr) pick(+tr.dataset.i) }
+  if (!map) { map = studio.shelfMap('map'); layer = L.layerGroup().addTo(map) }
+  layer.clearLayers()
+  L.circle([d.center.lat, d.center.lon], { radius: 5000, color: css('--violet'), weight: 1, fillOpacity: 0.06 }).addTo(layer)
+  d.wells.forEach((w, i) => L.circleMarker([w.lat, w.lon], { radius: w.facts.penetrates_reservoir ? 7 : 4, color: c[w.worst], fillColor: c[w.worst], fillOpacity: 0.8, weight: 1 })
+    .bindTooltip(`${esc(w.name)} · ${esc(w.status || '')} · ${w.worst}`).on('click', () => pick(i)).addTo(layer))
+  map.fitBounds(L.latLngBounds(d.wells.map((w) => [w.lat, w.lon])).pad(0.3), { maxZoom: 8 })
+  if (d.wells.length) pick(0)
+}
+
+function pick(i) {
+  sel = data.wells[i]
+  document.querySelectorAll('#matrix tr').forEach((tr) => tr.classList.toggle('sel', +tr.dataset.i === i))
+  $('well').hidden = false
+  $('wtitle').textContent = `${sel.name} · ${sel.status || ''}`
+  $('wtext').innerHTML = '<span class="muted">The model extracts plugs, cement tops and the abandonment from the drilling history and Diskos passages, then writes the barrier picture with citations.</span>'
+  $('plugs').hidden = true
+  sketch(null)
+}
+
+async function sketch(extracted) {
+  const card = extracted ? extracted.card : { tops: [], casing: [] }
+  if (!extracted) {
+    // tops and casing come with the ledger call; without it draw what the screen knows
+    const f = sel.facts
+    card.tops = []; card.casing = f.deepest_casing ? [{ depth: f.deepest_casing, diameter: '', type: 'deepest' }] : []
+    card.seal = [f.seal_top, f.seal_base]; card.res = f.reservoir_top
+  }
+  const tops = card.tops.filter((t) => t.level === 'FORMATION' || t.level === 'GROUP')
+  const seal = list($('seal').value), res = list($('res').value)
+  const shapes = [], ann = []
+  tops.filter((t) => t.level === 'FORMATION').forEach((t, k) => {
+    const isSeal = seal.includes(t.unit), isRes = res.includes(t.unit)
+    shapes.push({ type: 'rect', x0: 0, x1: 1, y0: t.top, y1: t.base, xref: 'x', line: { width: 0 }, fillcolor: isSeal ? css('--violet') + '66' : isRes ? css('--amber') + '55' : (k % 2 ? css('--line') : css('--panel-2')), layer: 'below' })
+    if (isSeal || isRes || (t.base - t.top) > 60) ann.push({ x: 1.02, y: (t.top + t.base) / 2, xref: 'x', text: esc(t.unit) + (isSeal ? ' · seal' : isRes ? ' · reservoir' : ''), showarrow: false, xanchor: 'left', font: { size: 10, color: isSeal ? css('--violet') : isRes ? css('--amber') : css('--muted') } })
+  })
+  const cas = (card.casing || []).filter((c) => c.depth).sort((a, b) => b.depth - a.depth)
+  cas.forEach((c, k) => {
+    const w = 0.08 + k * 0.035
+    shapes.push({ type: 'line', x0: 0.5 - w, x1: 0.5 - w, y0: 0, y1: c.depth, line: { color: css('--ink-2'), width: 2 } })
+    shapes.push({ type: 'line', x0: 0.5 + w, x1: 0.5 + w, y0: 0, y1: c.depth, line: { color: css('--ink-2'), width: 2 } })
+    ann.push({ x: 0.5 + w, y: c.depth, text: `${esc(c.diameter)}" ${num(c.depth, 0)} m`, showarrow: true, arrowhead: 0, ax: 40, ay: 0, font: { size: 10 } })
+  })
+  const plugs = extracted ? extracted.extracted.plugs.filter((p) => p.top_m) : []
+  plugs.forEach((p) => shapes.push({ type: 'rect', x0: 0.38, x1: 0.62, y0: p.top_m, y1: p.base_m || p.top_m + 30, fillcolor: css('--red'), line: { width: 0 }, opacity: 0.85 }))
+  const td = sel.facts.td || Math.max(...tops.map((t) => t.base || 0), 1000)
+  Plotly.react('sketch', [{ x: [0.5], y: [0], mode: 'markers', marker: { opacity: 0 }, hoverinfo: 'skip' }],
+    plotLayout({ shapes, annotations: ann, showlegend: false, margin: { l: 60, r: 160, t: 10, b: 20 }, xaxis: { range: [0, 1], visible: false }, yaxis: { autorange: false, range: [td * 1.03, 0], title: { text: 'MD (m)' } } }), plotConfig)
+}
+
+$('ledger').onclick = async () => {
+  const d = await busy($('ledger'), $('wstate'), 'Reading the drilling history and Diskos passages', () => call('api/ledger', { wellbore: sel.name, seal: list($('seal').value), reservoir: list($('res').value) })).catch(() => null)
+  if (!d) return
+  $('wtext').innerHTML = esc(d.text).replace(/\[(S\d+|F:\w+)\]/g, '<span class="tag blue">$1</span>')
+  const e = d.extracted
+  const rowsP = e.plugs.map((p) => `<tr><td>plug · ${esc(p.kind)}</td><td class="num">${p.top_m ?? '–'}</td><td class="num">${p.base_m ?? '–'}</td><td>${esc(p.source)}</td><td style="white-space:normal">${esc(p.quote)}</td></tr>`)
+    .concat(e.cement.map((c) => `<tr><td>cement · ${esc(c.casing)}</td><td class="num">${c.top_m ?? '–'}</td><td></td><td>${esc(c.source)}</td><td style="white-space:normal">${esc(c.quote)}</td></tr>`))
+  $('plugs').hidden = !rowsP.length
+  $('plugt').innerHTML = '<tr><th>What</th><th class="num">Top (m)</th><th class="num">Base (m)</th><th>Source</th><th>Quote</th></tr>' + rowsP.join('')
+  sketch(d)
+}
+</script>
+</body>
+</html>

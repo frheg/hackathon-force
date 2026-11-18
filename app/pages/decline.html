@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Field Pulse</title>
+<link rel="stylesheet" href="../style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+</head>
+<body data-app="decline" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Produce</div>
+      <h1>Field Pulse</h1>
+      <p class="lede">Every producing field on the shelf: monthly production, an Arps decline fitted from a month you
+        pick, and what the curve says is left against Sodir's own remaining reserves. The language model writes the
+        field brief.</p>
+    </div>
+    <span class="value-pill">Goes after <b>reserve bias caught early</b></span>
+  </div>
+
+  <div class="panel">
+    <div class="row end">
+      <label class="field grow">Field<select id="field"></select></label>
+      <label class="field">Product
+        <select id="product"><option value="oe">Oil equivalents</option><option value="oil">Oil</option><option value="gas">Gas</option></select>
+      </label>
+      <label class="field">Fit from<input id="start" type="month" /></label>
+      <button class="btn ghost" id="auto" type="button">Auto fit</button>
+    </div>
+    <p class="muted small" id="facts" style="margin: 0.7rem 0 0"></p>
+  </div>
+
+  <div class="kpis" id="kpis" style="margin-top: 1rem"></div>
+  <div class="callout warn small" id="weak" hidden style="margin-top: 1rem">The field is on plateau or the fit is poor,
+    so the curve says little about what is left. Click the month where the decline starts.</div>
+
+  <div class="split" style="margin-top: 1rem">
+    <div class="panel">
+      <div class="panel-head"><h2>Production and forecast</h2><span class="hint">Click a month to fit from there</span></div>
+      <div id="plot" class="chart" style="height: 470px"></div>
+      <p class="muted small">Arps hyperbolic decline (b at most 1), forecast until the rate falls below 5 % of the
+        fitted start rate or 20 years. Water cut from 2000, when Sodir starts reporting water.</p>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Field brief</h2><button class="btn" id="brief">Write the brief</button></div>
+      <div id="state"></div>
+      <div class="prose" id="text"><span class="muted">Sodir's description of the field, its production history and the forecast, in three short paragraphs.</span></div>
+    </div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, css } = window.studio
+const $ = (id) => document.getElementById(id)
+let start = ''
+
+call('api/fields').then((rows) => {
+  $('field').innerHTML = rows.map((f) => `<option value="${esc(f.field)}">${esc(f.field)} · ${esc((f.status || '').toLowerCase())} · ${num(f.cumulative_oe, 0)} MSm³ o.e.</option>`).join('')
+  $('field').value = (rows.find((f) => f.field === 'GULLFAKS') || rows[0]).field
+  load()
+})
+$('field').onchange = () => { start = ''; $('text').innerHTML = ''; load() }
+$('product').onchange = () => load()
+$('start').onchange = () => { start = $('start').value; load() }
+$('auto').onclick = () => { start = ''; load() }
+$('brief').onclick = brief
+
+async function load() {
+  const p = new URLSearchParams({ product: $('product').value })
+  if (start) p.set('start', start)
+  const d = await call(`api/field/${encodeURIComponent($('field').value)}?${p}`)
+  const f = d.facts, fit = d.fit
+  $('facts').textContent = [f.operator, f.status, f.hc_type, f.area, f.discovery_year && `discovered ${f.discovery_year} by ${f.discovery_well}`].filter(Boolean).join(' · ')
+  if (fit) $('start').value = fit.start
+  const gap = fit && f.sodir_remaining ? fit.remaining - f.sodir_remaining : null
+  $('kpis').innerHTML = [
+    [num(d.cumulative), 'produced', d.unit, ''],
+    [fit ? num(fit.remaining) : '–', 'left by the decline curve', d.unit, ''],
+    [num(f.sodir_remaining), `left by Sodir (${f.reserves_year ?? ''})`, d.unit, ''],
+    [gap === null ? '–' : `${gap > 0 ? '+' : ''}${num(gap)}`, 'curve minus Sodir', d.unit, gap === null ? '' : gap < 0 ? 'warn' : 'good'],
+    [fit ? `${Math.round(fit.decline_per_year * 100)}%` : '–', `first-year decline, b ${fit ? fit.b : '–'}`, '', ''],
+    [fit ? fit.r2.toFixed(2) : '–', `fit R² from ${fit ? fit.start : '–'}`, '', fit && fit.r2 < 0.5 ? 'warn' : ''],
+  ].map(([v, k, u, c]) => `<div class="kpi ${c}"><div class="v">${v}</div><div class="k">${esc(k)}${u ? `, ${esc(u)}` : ''}</div></div>`).join('')
+  $('weak').hidden = !(fit && fit.weak)
+
+  const first = d.series.water.findIndex((w) => w > 0)
+  const water = d.months.map((_, i) => {
+    if (first < 0 || i < first) return null
+    const o = d.series.oil[i] || 0, w = d.series.water[i] || 0
+    return o + w > 0 ? (100 * w) / (o + w) : null
+  })
+  const accent = css('--accent'), amber = css('--amber'), blue = css('--blue')
+  const traces = [
+    { x: d.months, y: d.series[d.product], name: 'Production', type: 'scatter', mode: 'lines', line: { color: accent, width: 1.6 }, fill: 'tozeroy', fillcolor: accent + '22' },
+    { x: d.forecast.map((r) => r[0]), y: d.forecast.map((r) => r[1]), name: 'Forecast', type: 'scatter', mode: 'lines', line: { color: amber, dash: 'dot', width: 2 } },
+    { x: d.months, y: water, name: 'Water cut', yaxis: 'y2', type: 'scatter', mode: 'lines', line: { color: blue, width: 1 }, opacity: 0.55 },
+  ]
+  const shapes = fit ? [{ type: 'line', x0: fit.start, x1: fit.start, yref: 'paper', y0: 0, y1: 1, line: { color: amber, width: 1, dash: 'dash' } }] : []
+  await Plotly.react('plot', traces, plotLayout({
+    shapes, hovermode: 'x unified', margin: { l: 60, r: 56, t: 30, b: 36 },
+    yaxis: { title: { text: `${d.unit} per month` }, rangemode: 'tozero' },
+    yaxis2: { title: { text: 'Water cut %' }, overlaying: 'y', side: 'right', range: [0, 100], showgrid: false },
+  }), plotConfig)
+  $('plot').removeAllListeners?.('plotly_click')
+  $('plot').on('plotly_click', (e) => { start = String(e.points[0].x).slice(0, 7); load() })
+}
+
+async function brief() {
+  $('text').textContent = ''
+  const d = await busy($('brief'), $('state'), 'Writing (the first answer can take a minute while the model loads)', () =>
+    call('api/brief', { field: $('field').value, product: $('product').value, start: start || null })).catch(() => null)
+  if (d) $('text').textContent = d.text
+}
+</script>
+</body>
+</html>

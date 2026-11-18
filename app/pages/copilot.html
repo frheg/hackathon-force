@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NCS Copilot</title>
+<link rel="stylesheet" href="../style.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+</head>
+<body data-app="copilot" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Data and knowledge</div>
+      <h1>NCS Copilot</h1>
+      <p class="lede">Ask the Norwegian shelf in plain words. The model writes one SQL query over Sodir's FactPages
+        (fields, wellbores, discoveries, licences, production, reserves), the server runs it read-only, and you get
+        the answer, the rows and the wells on a map.</p>
+    </div>
+    <span class="value-pill">Goes after <b>hours of data hunting per question</b></span>
+  </div>
+
+  <div class="panel">
+    <form id="f" class="row end">
+      <textarea id="q" class="grow" rows="2" placeholder="Which exploration wells found gas in the Norwegian Sea since 2020, and who drilled them?"></textarea>
+      <button class="btn" id="go" type="submit">Ask</button>
+    </form>
+    <div class="chips" id="examples" style="margin-top: 0.7rem"></div>
+    <div id="state" style="margin-top: 0.6rem"></div>
+  </div>
+
+  <div id="out" hidden>
+    <div class="split" style="margin-top: 1rem">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><h2>Answer</h2><span class="hint" id="rowcount"></span></div>
+          <div class="prose" id="answer"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Rows</h2><button class="btn ghost" id="csv" type="button">Download CSV</button></div>
+          <div class="table-wrap"><table id="table"></table></div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="panel" id="mapcard" hidden>
+          <div class="panel-head"><h2>Wells</h2><span class="hint" id="mapcount"></span></div>
+          <div id="map" class="map"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>The query</h2><span class="hint">DuckDB, read-only, no file or network access</span></div>
+          <pre id="sql"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy } = window.studio
+const $ = (id) => document.getElementById(id)
+const examples = [
+  'Which ten fields produced the most oil equivalents in 2025?',
+  'Exploration wells that found oil in 2024 and 2025, with operator',
+  'Which fields have the most remaining oil, and who operates them?',
+  'Discoveries made in the Barents Sea since 2015',
+  'Deepest exploration wells by total depth',
+  'Which operator drilled the most exploration wells per year since 2015?',
+]
+let map, layer, last
+
+$('examples').innerHTML = examples.map((e) => `<button type="button" class="chip">${esc(e)}</button>`).join('')
+$('examples').onclick = (e) => { if (e.target.matches('.chip')) { $('q').value = e.target.textContent; ask() } }
+$('f').onsubmit = (e) => { e.preventDefault(); ask() }
+$('q').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }
+$('csv').onclick = () => {
+  if (!last) return
+  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const text = [last.columns.map(q).join(','), ...last.rows.map((r) => r.map(q).join(','))].join('\n')
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text], { type: 'text/csv' })), download: 'ncs-copilot.csv' })
+  a.click()
+}
+
+async function ask() {
+  const q = $('q').value.trim()
+  if (!q) return
+  const d = await busy($('go'), $('state'), 'Writing and running the query (the first question can take a minute while the model loads)', () => call('api/ask', { q })).catch(() => null)
+  if (d) show(d)
+}
+
+function show(d) {
+  last = d
+  $('out').hidden = false
+  $('sql').textContent = d.sql || ''
+  if (d.error) {
+    $('answer').innerHTML = `<div class="callout err">The query failed: ${esc(d.error)}</div>`
+    $('table').innerHTML = ''
+    $('mapcard').hidden = true
+    return
+  }
+  $('answer').textContent = d.answer
+  $('rowcount').textContent = `${d.rows.length} row${d.rows.length === 1 ? '' : 's'}`
+  $('table').innerHTML = `<tr>${d.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr>` +
+    d.rows.map((r) => `<tr>${r.map((v) => `<td class="${typeof v === 'number' ? 'num' : ''}">${esc(v)}</td>`).join('')}</tr>`).join('')
+  $('mapcard').hidden = !d.points.length
+  if (d.points.length) draw(d.points)
+}
+
+function draw(points) {
+  if (!map) {
+    map = studio.shelfMap("map", [63, 5], 5)
+  }
+  if (layer) layer.remove()
+  const color = studio.css('--accent')
+  layer = L.featureGroup(points.map((p) => L.circleMarker([p.lat, p.lon], { radius: 5, weight: 1.5, color, fillColor: color, fillOpacity: 0.55 }).bindTooltip(esc(p.label)))).addTo(map)
+  $('mapcount').textContent = `${points.length} on the map`
+  setTimeout(() => { map.invalidateSize(); map.fitBounds(layer.getBounds().pad(0.25), { maxZoom: 9 }) }, 60)
+}
+</script>
+</body>
+</html>

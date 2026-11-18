@@ -3,7 +3,6 @@ volume next to Sodir's own remaining reserves. The LLM writes a field brief from
 """
 
 import asyncio
-import datetime as dt
 
 import duckdb
 import numpy as np
@@ -22,8 +21,9 @@ PRODUCTS = {
     "oil": ("prfPrdOilNetMillSm3", "fldRemainingOil", "million Sm3"),
     "gas": ("prfPrdGasNetBillSm3", "fldRemainingGas", "billion Sm3"),
 }
-HORIZON = 25 * 12  # months
-LIMIT = 0.02  # stop the forecast when the rate falls below 2 % of the fitted start rate
+HORIZON = 20 * 12  # months
+LIMIT = 0.05  # stop the forecast when the rate falls below 5 % of the fitted start rate
+B_MAX = 1.0  # b above 1 gives an endless tail; conventional fields stay at or below it
 
 
 def query(sql: str, *args) -> list[tuple]:
@@ -65,27 +65,27 @@ def analyse(name: str, product: str, start: str | None) -> dict:
     if ok.sum() >= 6:
         try:
             p, _ = curve_fit(
-                arps, t[ok], y[ok], p0=[y[ok][0], 0.02, 0.5], bounds=([0, 1e-4, 1e-3], [y.max() * 3, 1.0, 1.5]), maxfev=20000
+                arps, t[ok], y[ok], p0=[y[ok][0], 0.02, 0.5], bounds=([0, 1e-4, 1e-3], [y.max() * 3, 1.0, B_MAX]), maxfev=20000
             )
             pred = arps(t[ok], *p)
             r2 = 1 - ((y[ok] - pred) ** 2).sum() / max(((y[ok] - y[ok].mean()) ** 2).sum(), 1e-12)
-            tf = np.arange(len(t), len(t) + HORIZON, dtype=float)
-            qf = arps(tf, *p)
-            qf = qf[qf >= LIMIT * p[0]]
-            last = dt.date(int(months[-1][:4]), int(months[-1][5:]), 1)
+            qf = arps(np.arange(len(t), len(t) + HORIZON, dtype=float), *p)
+            qf = qf[: np.argmax(qf < LIMIT * p[0])] if (qf < LIMIT * p[0]).any() else qf
+            y0, m0 = int(months[-1][:4]), int(months[-1][5:])
             forecast = [
-                [f"{last.year + (last.month + k) // 12 - (1 if (last.month + k) % 12 == 0 else 0)}-"
-                 f"{((last.month + k - 1) % 12) + 1:02d}", round(float(v), 5)]
-                for k, v in enumerate(qf, start=1)
+                [f"{y0 + (m0 - 1 + k) // 12}-{(m0 - 1 + k) % 12 + 1:02d}", round(float(v), 5)] for k, v in enumerate(qf, start=1)
             ]
+            decline = float(1 - arps(12, *p) / p[0])  # effective first-year decline
             fit = {
                 "start": months[i0],
                 "qi": round(float(p[0]), 4),
-                "decline_per_year": round(float(1 - (arps(12, *p) / p[0])), 3),  # effective first-year decline
+                "decline_per_year": round(decline, 3),
                 "b": round(float(p[2]), 2),
                 "r2": round(float(r2), 3),
                 "remaining": round(float(qf.sum()), 2),
                 "until": forecast[-1][0] if forecast else months[-1],
+                # on plateau, or too noisy: the curve says little about what is left
+                "weak": bool(decline < 0.03 or r2 < 0.5),
             }
         except RuntimeError:
             fit = None

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tie-back Matchmaker</title>
+<link rel="stylesheet" href="../style.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+</head>
+<body data-app="tieback" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Explore and appraise</div>
+      <h1>Tie-back Matchmaker</h1>
+      <p class="lede">Every undeveloped discovery on the shelf against the producing fields that could host it, ranked
+        by what is at stake before the host closes. Scores weigh distance, the host's spare capacity, fluid match and
+        timing; the discovery's profile is the outside view from comparable NCS fields.</p>
+    </div>
+    <span class="value-pill">Goes after <b>500+ million Sm³ o.e. waiting for a host</b></span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="split" style="margin-top: 1rem">
+    <div class="panel">
+      <div class="panel-head"><h2>Discoveries and hosts</h2>
+        <div class="legend"><span><i style="background:var(--amber)"></i>discovery (size = volume)</span><span><i style="background:var(--accent)"></i>producing host</span></div></div>
+      <div id="map" class="map" style="height: 520px"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Most urgent</h2><span class="hint">volume × fit, sooner-closing hosts first</span></div>
+      <div class="table-wrap" style="max-height: 520px"><table id="board"></table></div>
+    </div>
+  </div>
+
+  <div id="detail" hidden style="margin-top: 1rem">
+    <div class="split">
+      <div class="panel">
+        <div class="panel-head"><h2 id="dtitle"></h2><span class="hint" id="dsub"></span></div>
+        <div class="kpis" id="dkpis"></div>
+        <div id="flags" style="margin-top: 0.8rem"></div>
+        <div id="profile" class="chart" style="height: 330px; margin-top: 0.6rem"></div>
+        <p class="muted small">Band: P10 to P90 yearly production of NCS fields of the same size class that have produced most of
+          their volume, scaled to this discovery. The dashed line is the host's end of life at its current rate and
+          remaining reserves.</p>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><h2>Candidate hosts</h2></div>
+          <div class="table-wrap"><table id="hosts"></table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Screening memo</h2><button class="btn" id="memo">Write memo</button></div>
+          <div id="mstate"></div>
+          <div class="prose" id="mtext"><span class="muted">Recommendation, why this host, timing, risks and next steps, from the numbers and Sodir's field description.</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, css } = window.studio
+const $ = (id) => document.getElementById(id)
+let data, map, lines, current, host
+
+call('api/board').then((d) => {
+  data = d
+  const t = d.totals
+  $('kpis').innerHTML = [
+    [t.discoveries, 'undeveloped discoveries with a volume'],
+    [num(t.oe, 0) + '<small>MSm³ o.e.</small>', 'recoverable, Sodir estimates'],
+    [t.with_host, `with a producing host within 60 km`],
+    [num(t.at_risk_oe, 0) + '<small>MSm³ o.e.</small>', 'where the best host has a red flag', 'warn'],
+  ].map(([v, k, c]) => `<div class="kpi ${c || ''}"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('')
+  drawMap()
+  $('board').innerHTML = '<tr><th>Discovery</th><th class="num">MSm³</th><th>Best host</th></tr>' +
+    d.discoveries.filter((x) => x.best).map((x, i) => `<tr data-i="${d.discoveries.indexOf(x)}" style="cursor:pointer">
+      <td>${esc(x.name)}<div class="small muted">${esc(x.hc || '')} · ${esc(x.status.replace('Production ', ''))}</div></td>
+      <td class="num">${num(x.oe)}</td><td>${esc(x.best.host)}${x.best.flags.length ? ' <span class="tag amber">risk</span>' : ''}<div class="small muted">${x.best.km} km · ends ${x.best.host_end_year ?? '?'}${x.best.odds ? ` · ${Math.round(x.best.odds.p_fit * 100)}% fits` : ''}</div></td></tr>`).join('')
+  $('board').onclick = (e) => { const tr = e.target.closest('tr[data-i]'); if (tr) select(+tr.dataset.i) }
+  select(d.discoveries.findIndex((x) => x.best))
+})
+
+function drawMap() {
+  map = studio.shelfMap("map")
+  const accent = css('--accent'), amber = css('--amber')
+  data.hosts.forEach((h) => L.circleMarker([h.lat, h.lon], { radius: 4, color: accent, fillColor: accent, fillOpacity: 0.8, weight: 1 })
+    .bindTooltip(`${esc(h.field)} · ${esc(h.operator)}<br>${num(h.rate, 2)} MSm³ o.e./yr, ends ${h.end_year ?? '?'}`).addTo(map))
+  data.discoveries.forEach((x, i) => L.circleMarker([x.lat, x.lon], { radius: 3 + Math.sqrt(x.oe) * 1.4, color: amber, fillColor: amber, fillOpacity: 0.45, weight: 1 })
+    .bindTooltip(`${esc(x.name)} · ${num(x.oe)} MSm³ o.e.`).on('click', () => select(i)).addTo(map))
+  lines = L.layerGroup().addTo(map)
+}
+
+function select(i) {
+  current = data.discoveries[i]
+  if (!current) return
+  host = current.best && current.best.host
+  document.querySelectorAll('#board tr').forEach((tr) => tr.classList.toggle('sel', +tr.dataset.i === i))
+  $('detail').hidden = false
+  lines.clearLayers()
+  const hs = Object.fromEntries(data.hosts.map((h) => [h.field, h]))
+  current.hosts.forEach((c, k) => {
+    const h = hs[c.host]
+    L.polyline([[current.lat, current.lon], [h.lat, h.lon]], { color: k ? css('--muted') : css('--amber'), weight: k ? 1.5 : 3, dashArray: k ? '4 4' : null }).addTo(lines)
+  })
+  map.flyTo([current.lat, current.lon], 7, { duration: 0.6 })
+  renderDetail()
+}
+
+function renderDetail() {
+  const c = current, b = c.hosts.find((x) => x.host === host) || c.best
+  $('dtitle').textContent = c.name
+  $('dsub').textContent = `${c.hc || ''} · found ${c.year} by ${c.well} · ${c.operator}`
+  $('dkpis').innerHTML = b ? [
+    [num(c.oe) + '<small>MSm³ o.e.</small>', 'recoverable (Sodir)'], [b.host, 'host'], [b.km + '<small>km</small>', 'distance'],
+    [Math.round(b.spare * 100) + '%', 'host below its peak'], [b.host_end_year ?? '–', 'host end of life'], [b.score.toFixed(2), 'fit score', b.flags.length ? 'warn' : 'good'],
+    ...(b.odds ? [[Math.round(b.odds.p_fit * 100) + '%', '80 % produced before the host closes (2,000 runs)', b.odds.p_fit < 0.3 ? 'bad' : b.odds.p_fit < 0.6 ? 'warn' : 'good'], [num(b.odds.volume) + '<small>MSm³</small>', `expected through the host (${Math.round(b.odds.share_p10 * 100)}–${Math.round(b.odds.share_p90 * 100)}% of it, P10–P90)`]] : []),
+  ].map(([v, k, cl]) => `<div class="kpi ${cl || ''}"><div class="v" style="font-size:1.15rem">${v}</div><div class="k">${k}</div></div>`).join('') : '<div class="empty">No producing host within 60 km.</div>'
+  $('flags').innerHTML = b && b.flags.length ? b.flags.map((f) => `<div class="callout warn small" style="margin-top:.4rem">${esc(f)}</div>`).join('') : ''
+  $('hosts').innerHTML = '<tr><th>Host</th><th class="num">km</th><th class="num">Fluid</th><th class="num">Timing</th><th class="num">Score</th></tr>' +
+    c.hosts.map((h) => `<tr data-h="${esc(h.host)}" class="${h.host === host ? 'sel' : ''}" style="cursor:pointer"><td>${esc(h.host)}</td><td class="num">${h.km}</td><td class="num">${h.fluid}</td><td class="num">${h.timing}</td><td class="num">${h.score.toFixed(2)}</td></tr>`).join('')
+  $('hosts').onclick = (e) => { const tr = e.target.closest('tr[data-h]'); if (tr) { host = tr.dataset.h; $('mtext').innerHTML = ''; renderDetail() } }
+  // reference-class band, scaled to this discovery
+  const key = c.oe < 5 ? '0-5' : c.oe < 15 ? '5-15' : '15-60'
+  const rc = data.reference[key], start = new Date().getFullYear() + 4
+  const sum = rc.p50.reduce((a, v) => a + v, 0)
+  const yrs = rc.p50.map((_, i) => start + i)
+  const sc = (arr) => arr.map((v) => (v / sum) * c.oe)
+  const accent = css('--accent'), amber = css('--amber')
+  const shapes = b && b.host_end_year ? [{ type: 'line', x0: b.host_end_year, x1: b.host_end_year, yref: 'paper', y0: 0, y1: 1, line: { color: amber, dash: 'dash', width: 2 } }] : []
+  Plotly.react('profile', [
+    { x: yrs, y: sc(rc.p90), mode: 'lines', line: { width: 0 }, showlegend: false, hoverinfo: 'skip' },
+    { x: yrs, y: sc(rc.p10), mode: 'lines', fill: 'tonexty', fillcolor: accent + '30', line: { width: 0 }, name: 'P10–P90' },
+    { x: yrs, y: sc(rc.p50), mode: 'lines+markers', line: { color: accent, width: 2 }, name: `median of ${rc.n} fields` },
+  ], plotLayout({ shapes, margin: { l: 56, r: 16, t: 30, b: 36 }, yaxis: { title: { text: 'MSm³ o.e. per year' }, rangemode: 'tozero' },
+    annotations: shapes.length ? [{ x: b.host_end_year, yref: 'paper', y: 1, text: `${host} ends`, showarrow: false, font: { color: amber, size: 11 }, xanchor: 'left' }] : [] }), plotConfig)
+}
+
+$('memo').onclick = async () => {
+  if (!current || !host) return
+  $('mtext').textContent = ''
+  const d = await busy($('memo'), $('mstate'), 'Writing the memo', () => call('api/memo', { discovery: current.name, host })).catch(() => null)
+  if (d) $('mtext').textContent = d.text
+}
+</script>
+</body>
+</html>

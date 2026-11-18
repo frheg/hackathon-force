@@ -1,9 +1,12 @@
 """Downloads the open data the sketches use into data/ (or $DATA_DIR):
 
-    uv run python fetch_data.py [sodir] [force2020]
+    uv run python fetch_data.py [sodir] [force2020] [diskosqa] [volve] [seismic]
 
-sodir:     Sodir FactPages tables (CSV, NOLD 2.0) -> sodir/*.csv and ncs.duckdb (the copilot's database)
+sodir:     Sodir FactPages tables (CSV, NOLD 2.0) -> sodir/*.csv and ncs.duckdb (most apps' database)
 force2020: FORCE 2020 lithology competition well logs (CC BY 4.0, github.com/bolgebrygg/Force-2020-Machine-Learning-competition)
+diskosqa:  DISKOS-QA benchmark (NLOD 2.0); then `python -m sketches.reports` builds the passage index
+volve:     Volve daily drilling reports (CC BY 4.0, Hugging Face)
+seismic:   F3 seismic with facies labels (CC BY 4.0, Zenodo), about 1 GB
 """
 
 import sys
@@ -30,6 +33,22 @@ TABLES = {
     "discovery": "discovery",
     "licence": "licence",
     "company": "company",
+    # well detail: tops, casing and leak-off tests, mud weights, drill-stem tests, cores, the drilling history text,
+    # and links to the published well reports (PDF)
+    "wellbore_formation_top": "wellbore_formation_top",
+    "wellbore_casing_and_lot": "wellbore_casing_and_lot",
+    "wellbore_mud": "wellbore_mud",
+    "wellbore_dst": "wellbore_dst",
+    "wellbore_core": "wellbore_core",
+    "wellbore_history": "wellbore_history",
+    "wellbore_document": "wellbore_document",
+    # infrastructure and the undeveloped resource base
+    "facility_fixed": "facility_fixed",
+    "discovery_reserves": "discovery_reserves",
+    "discovery_description": "discovery_description",
+    "field_investment_yearly": "field_investment_yearly",
+    "field_operator_hst": "field_operator_hst",
+    "strat_litho_overview": "strat_litho_overview",
 }
 FORCE = "https://github.com/bolgebrygg/Force-2020-Machine-Learning-competition/raw/master/lithology_competition/data/"
 
@@ -75,7 +94,33 @@ def force2020() -> None:
         download(FORCE + f, d / f)
 
 
+def diskosqa() -> None:
+    """DISKOS-QA: 1,027 question-answer pairs over Diskos well reports, with their source passages (NLOD 2.0)."""
+    download(
+        "https://raw.githubusercontent.com/georgeghon/DISKOS-QA/main/benchmark/dataset/FORCE_QA_public_final.csv",
+        DATA_DIR / "diskosqa" / "diskos_qa.csv",
+    )
+
+
+def volve() -> None:
+    """Volve's 1,759 daily drilling reports as structured WITSML (CC BY 4.0 copy by bengsoon on Hugging Face)."""
+    download(
+        "https://huggingface.co/datasets/bengsoon/volve_daily_drilling_report/resolve/main/data/all-00000-of-00001.parquet",
+        DATA_DIR / "volve" / "ddr.parquet",
+    )
+
+
+def seismic() -> None:
+    """F3 Netherlands seismic with facies labels (Alaudah et al., Zenodo 3755060; 1 GB, CC BY 4.0): a public stand-in
+    for the event's seismic."""
+    d = DATA_DIR / "seismic" / "f3"
+    download("https://zenodo.org/api/records/3755060/files/data.zip/content", d / "data.zip")
+    with zipfile.ZipFile(d / "data.zip") as z:
+        z.extractall(d)
+    (d / "data.zip").unlink()
+
+
 if __name__ == "__main__":
-    which = sys.argv[1:] or ["sodir", "force2020"]
-    for w in which:
-        {"sodir": sodir, "force2020": force2020}[w]()
+    steps = {"sodir": sodir, "force2020": force2020, "diskosqa": diskosqa, "volve": volve, "seismic": seismic}
+    for w in sys.argv[1:] or list(steps):
+        steps[w]()

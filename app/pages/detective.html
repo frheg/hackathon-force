@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Diskos Detective</title>
+<link rel="stylesheet" href="../style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+</head>
+<body data-app="detective" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Data and knowledge</div>
+      <h1>Diskos Detective</h1>
+      <p class="lede">An agent over Diskos well reports and Sodir's FactPages. It searches the reports, pulls the
+        official numbers, and answers with every claim cited. It builds a wellbore dossier in a minute, and it is
+        scored on DISKOS-QA, the benchmark FORCE and the operators built.</p>
+    </div>
+    <span class="value-pill">Goes after <b>days of report digging per well review</b></span>
+  </div>
+
+  <div class="row" style="margin-bottom: 1rem">
+    <div class="seg" id="tabs">
+      <button class="on" data-tab="ask">Ask</button><button data-tab="dossier">Dossier</button><button data-tab="score">Scorecard</button>
+    </div>
+    <span class="muted small" id="corpus"></span>
+  </div>
+
+  <!-- ask -->
+  <section data-pane="ask">
+    <div class="panel">
+      <form id="askf" class="row end">
+        <textarea id="q" class="grow" rows="2" placeholder="What did the cores in 9/2-1 show about Sandnes Formation permeability?"></textarea>
+        <button class="btn" id="go" type="submit">Ask</button>
+      </form>
+      <div class="row" style="margin-top: 0.7rem; justify-content: space-between">
+        <div class="seg" id="mode">
+          <button class="on" data-mode="agent" title="The model calls tools until it has the evidence">Agent</button>
+          <button data-mode="filtered" title="Keyword and vector search inside the named wells, fields and formations">Filtered RAG</button>
+          <button data-mode="vector" title="Vector search only">Plain RAG</button>
+          <button data-mode="closed" title="No evidence: what the model knows">Closed book</button>
+        </div>
+        <span class="muted small">Examples from DISKOS-QA</span>
+      </div>
+      <div class="chips" id="examples" style="margin-top: 0.6rem"></div>
+      <div id="state" style="margin-top: 0.6rem"></div>
+    </div>
+    <div class="split" id="out" hidden style="margin-top: 1rem">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><h2>Answer</h2><div class="row"><span class="hint" id="meta"></span><button class="btn ghost" id="verify" type="button">Check every claim</button></div></div>
+          <div class="prose" id="answer"></div>
+          <div id="vstate" style="margin-top: .6rem"></div>
+          <div class="row small" id="ents" style="margin-top: 0.8rem"></div>
+        </div>
+        <div class="panel" id="tracecard">
+          <div class="panel-head"><h2>What the agent did</h2></div>
+          <div id="trace"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Evidence</h2><span class="hint" id="nsrc"></span></div>
+        <div id="sources"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- dossier -->
+  <section data-pane="dossier" hidden>
+    <div class="panel">
+      <div class="row end">
+        <label class="field grow">Wellbore<input id="wb" list="wbs" placeholder="9/2-1, 15/9-19 A, 34/10-1 ..." /></label>
+        <datalist id="wbs"></datalist>
+        <button class="btn" id="build">Build dossier</button>
+      </div>
+      <div class="chips" id="topwb" style="margin-top: 0.7rem"></div>
+      <div id="dstate" style="margin-top: 0.6rem"></div>
+    </div>
+    <div id="dout" hidden style="margin-top: 1rem">
+      <div class="kpis" id="dkpis"></div>
+      <div class="split" style="margin-top: 1rem">
+        <div class="panel">
+          <div class="panel-head"><h2 id="dtitle">Dossier</h2><span class="hint" id="dmeta"></span></div>
+          <div class="prose" id="dtext"></div>
+        </div>
+        <div class="stack">
+          <div class="panel"><div class="panel-head"><h2>Formation tops</h2></div><div class="table-wrap" style="max-height: 260px"><table id="dtops"></table></div></div>
+          <div class="panel"><div class="panel-head"><h2>Casing and leak-off tests</h2></div><div class="table-wrap" style="max-height: 220px"><table id="dcasing"></table></div></div>
+          <div class="panel"><div class="panel-head"><h2>Report passages</h2></div><div id="dsources"></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- scorecard -->
+  <section data-pane="score" hidden>
+    <div id="score"></div>
+  </section>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, palette } = window.studio
+const $ = (id) => document.getElementById(id)
+let mode = 'agent', sources = []
+
+// tabs
+$('tabs').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return
+  $('tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b))
+  document.querySelectorAll('[data-pane]').forEach((p) => (p.hidden = p.dataset.pane !== b.dataset.tab))
+  if (b.dataset.tab === 'score') score()
+}
+$('mode').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return
+  mode = b.dataset.mode
+  $('mode').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b))
+}
+
+const examples = [
+  'What percentage of GECO Klinkenberg-corrected horizontal permeability measurements on 9/2-1 Sandnes Formation cores exceed 100 mD?',
+  'What drilling problems were met in the 12 1/4 inch section of 15/9-19 A?',
+  'Which formation was the main reservoir in 34/10-1 and what did the DST produce?',
+  'What VSP survey was run in 9/2-4 S and what was it used for?',
+]
+$('examples').innerHTML = examples.map((e) => `<button type="button" class="chip">${esc(e)}</button>`).join('')
+$('examples').onclick = (e) => { if (e.target.matches('.chip')) { $('q').value = e.target.textContent; ask() } }
+$('askf').onsubmit = (e) => { e.preventDefault(); ask() }
+$('q').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }
+
+// [S3] and [F:tops] become clickable chips
+function cite(text) {
+  return esc(text)
+    .replace(/\[(S\d+)\]/g, '<button class="cite" data-ref="$1">$1</button>')
+    .replace(/\[F:(\w+)\]/g, '<span class="cite f" title="FactPages table">$1</span>')
+}
+function sourceList(list, el) {
+  el.innerHTML = list.length ? list.map((p) => `
+    <div class="src" id="src-${p.ref}">
+      <div class="row" style="justify-content: space-between"><b>${p.ref}</b><span class="muted small">${esc(p.document)}</span></div>
+      <div class="small muted">${esc(p.wellbores.join(', '))}${p.formations.length ? ' · ' + esc(p.formations.join(', ')) : ''}</div>
+      <details><summary>${esc(p.text.slice(0, 180))}…</summary><div class="small" style="margin-top: .4rem">${esc(p.text)}</div></details>
+    </div>`).join('') : '<div class="empty">No report passages.</div>'
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.cite[data-ref]'); if (!b) return
+  const el = document.querySelectorAll(`#src-${b.dataset.ref}`)
+  el.forEach((x) => { x.scrollIntoView({ behavior: 'smooth', block: 'center' }); x.classList.add('flash'); setTimeout(() => x.classList.remove('flash'), 1400); x.querySelector('details').open = true })
+})
+
+async function ask() {
+  const q = $('q').value.trim(); if (!q) return
+  const label = { agent: 'The agent is searching reports and FactPages', filtered: 'Searching inside the named wells and formations', vector: 'Searching', closed: 'Answering without evidence' }[mode]
+  const d = await busy($('go'), $('state'), `${label} (the first answer can take a minute while the model loads)`, () => call('api/ask', { q, mode })).catch(() => null)
+  if (!d) return
+  $('out').hidden = false
+  $('answer').innerHTML = cite(d.answer)
+  $('meta').textContent = `${d.seconds} s · ${mode}`
+  const ents = Object.entries(d.entities).flatMap(([k, v]) => v.map((x) => `<span class="tag blue">${esc(x)}</span>`))
+  $('ents').innerHTML = ents.length ? `<span class="muted">Named in the question:</span>${ents.join('')}` : ''
+  sources = d.sources
+  $('vstate').innerHTML = ''
+  $('nsrc').textContent = `${d.sources.length} passages`
+  sourceList(d.sources, $('sources'))
+  $('tracecard').hidden = !d.trace.length
+  $('trace').innerHTML = d.trace.map((t, i) => `<div class="step"><span class="tag">${i + 1}</span> <b>${esc(t.tool)}</b> <code>${esc(JSON.stringify(t.args))}</code> <span class="muted small">${t.ms} ms · ${num(t.chars, 0)} chars</span></div>`).join('')
+}
+
+// dossier
+call('api/wellbores').then((d) => {
+  $('corpus').textContent = `${num(d.covered, 0)} wellbores have report passages`
+  $('topwb').innerHTML = d.wellbores.slice(0, 14).map((w) => `<button class="chip" data-wb="${esc(w.name)}">${esc(w.name)} · ${w.reports}</button>`).join('')
+})
+$('topwb').onclick = (e) => { const b = e.target.closest('[data-wb]'); if (b) { $('wb').value = b.dataset.wb; dossier() } }
+$('wb').oninput = async () => {
+  const q = $('wb').value.trim(); if (q.length < 2) return
+  const d = await call(`api/wellbores?q=${encodeURIComponent(q)}`)
+  $('wbs').innerHTML = d.wellbores.map((w) => `<option value="${esc(w.name)}">${esc(w.field || '')} ${w.reports ? '· ' + w.reports + ' passages' : ''}</option>`).join('')
+}
+$('build').onclick = dossier
+$('wb').onkeydown = (e) => { if (e.key === 'Enter') dossier() }
+
+async function dossier() {
+  const name = $('wb').value.trim(); if (!name) return
+  const d = await busy($('build'), $('dstate'), 'Reading FactPages and the reports, writing the dossier', () => call(`api/dossier/${encodeURIComponent(name)}`)).catch(() => null)
+  if (!d) return
+  const h = d.card.header
+  $('dout').hidden = false
+  $('dtitle').textContent = `Dossier: ${h.name}`
+  $('dmeta').textContent = `built in ${d.seconds} s from ${d.sources.length} passages and ${['tops', 'casing', 'mud', 'dst', 'cores'].reduce((a, k) => a + d.card[k].length, 0)} FactPages rows`
+  $('dkpis').innerHTML = [
+    [h.operator, 'operator'], [h.content || '–', 'content'], [h.status || '–', 'status'],
+    [h.td ? `${num(h.td, 0)} m` : '–', 'total depth'], [h.water_depth ? `${num(h.water_depth, 0)} m` : '–', 'water depth'],
+    [(h.entry || '').slice(0, 4) || '–', `spud · ${h.kind}`],
+  ].map(([v, k]) => `<div class="kpi"><div class="v" style="font-size:1.05rem">${esc(v)}</div><div class="k">${k}</div></div>`).join('')
+  $('dtext').innerHTML = cite(d.text)
+  $('dtops').innerHTML = '<tr><th>Unit</th><th class="num">Top (m)</th><th class="num">Base (m)</th></tr>' +
+    d.card.tops.map((t) => `<tr><td>${'&nbsp;'.repeat((t.level === 'GROUP' ? 0 : 3))}${esc(t.unit)}</td><td class="num">${num(t.top, 0)}</td><td class="num">${num(t.base, 0)}</td></tr>`).join('')
+  $('dcasing').innerHTML = '<tr><th>Casing</th><th class="num">Shoe (m)</th><th class="num">Hole</th><th>Test</th></tr>' +
+    d.card.casing.map((c) => `<tr><td>${esc(c.type)} ${esc(c.diameter)}"</td><td class="num">${num(c.depth, 0)}</td><td class="num">${esc(c.hole)}"</td><td>${c.lot_mud_density ? esc(c.test) + ' ' + c.lot_mud_density : ''}</td></tr>`).join('')
+  sourceList(d.sources, $('dsources'))
+}
+
+// scorecard
+async function score() {
+  const d = await call('api/scorecard')
+  if (!d.ready) { $('score').innerHTML = '<div class="empty">No scorecard yet: run <code>uv run python -m sketches.scorecard retrieval</code>.</div>'; return }
+  const r = d.retrieval || {}, a = d.answers || {}
+  const modes = Object.keys(r)
+  $('score').innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="v">${num(d.corpus.questions_supported, 0)}</div><div class="k">DISKOS-QA questions with supported answers</div></div>
+      <div class="kpi"><div class="v">${num(d.corpus.passages, 0)}</div><div class="k">report passages in the haystack</div></div>
+      ${modes.map((m) => `<div class="kpi ${m === 'filtered' ? 'good' : ''}"><div class="v">${Math.round(r[m].recall_at_5 * 100)}%</div><div class="k">evidence found in top 5, ${m}</div></div>`).join('')}
+      ${Object.entries(a).map(([m, v]) => `<div class="kpi"><div class="v">${Math.round(v.accuracy * 100)}%</div><div class="k">answers correct, ${m} (n=${v.n})</div></div>`).join('')}
+    </div>
+    <div class="grid g2" style="margin-top:1rem">
+      <div class="panel"><div class="panel-head"><h2>Finding the evidence, by topic</h2><span class="hint">gold passage in the top 5</span></div><div id="p1" class="chart"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Answers, by configuration</h2><span class="hint">${a && Object.keys(a).length ? 'judged against the reference answer · ' + esc(d.model || '') : 'not run yet'}</span></div><div id="p2" class="chart"></div></div>
+    </div>
+    <p class="muted small" style="margin-top:.8rem">Updated ${esc(d.updated)}. The haystack is every passage of every question, so a question's own passages compete with thousands of others.</p>`
+  const topics = modes.length ? Object.keys(r[modes[0]].by_topic) : []
+  const pal = palette()
+  Plotly.react('p1', modes.map((m, i) => ({ type: 'bar', orientation: 'h', name: m, y: topics, x: topics.map((t) => r[m].by_topic[t] * 100), marker: { color: pal[i] } })),
+    plotLayout({ barmode: 'group', margin: { l: 150, r: 10, t: 30, b: 36 }, xaxis: { range: [0, 100], title: { text: '%' } } }), plotConfig)
+  const am = Object.keys(a)
+  if (am.length) Plotly.react('p2', [{ type: 'bar', x: am, y: am.map((m) => a[m].accuracy * 100), marker: { color: am.map((_, i) => pal[i]) }, text: am.map((m) => `${Math.round(a[m].accuracy * 100)}%<br>${a[m].mean_seconds}s`), textposition: 'outside' }],
+    plotLayout({ margin: { l: 50, r: 10, t: 30, b: 36 }, yaxis: { range: [0, 110], title: { text: '% correct' } } }), plotConfig)
+  else $('p2').innerHTML = '<div class="empty">Run <code>uv run python -m sketches.scorecard answers --n 40</code> (GPU time).</div>'
+}
+</script>
+<style>
+  .cite { display: inline-block; font: 600 0.72rem var(--mono); padding: 0 0.35rem; margin: 0 0.1rem; border-radius: 5px; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); cursor: pointer; vertical-align: 1px; }
+  .cite.f { border-color: color-mix(in srgb, var(--blue) 50%, transparent); background: color-mix(in srgb, var(--blue) 12%, transparent); color: var(--blue); cursor: default; }
+  .src { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; margin-bottom: 0.55rem; background: var(--panel-2); transition: box-shadow 0.3s; }
+  .src.flash { box-shadow: 0 0 0 2px var(--accent); }
+  .step { padding: 0.35rem 0; border-bottom: 1px dashed var(--line); font-size: 0.85rem; overflow-wrap: anywhere; }
+</style>
+</body>
+</html>
+<script>
+// claim check: each sentence citing a passage is checked against it
+document.getElementById('verify').onclick = async () => {
+  const text = document.getElementById('answer').innerText
+  if (!text.trim()) return
+  const { esc, call, busy } = window.studio
+  const d = await busy(document.getElementById('verify'), document.getElementById('vstate'), 'Checking each claim against its cited passage', () =>
+    call('api/verify', { answer: text, sources: sources.map((p) => ({ ref: p.ref, text: p.text })) })).catch(() => null)
+  if (!d) return
+  const cls = { supported: 'ok', partly: 'part', unsupported: 'bad', uncited: 'none', table: 'none', unchecked: 'none' }
+  document.getElementById('answer').innerHTML = d.claims.map((c) => `<span class="claim ${cls[c.verdict]}" title="${esc(c.verdict + (c.why ? ': ' + c.why : ''))}">${cite(c.text)}</span>`).join(' ')
+  document.getElementById('vstate').innerHTML = `<span class="small muted">${d.supported} of ${d.checked} checked claims supported by their passages${d.unsupported ? ` · <span class="tag red">${d.unsupported} unsupported</span>` : ''} · hover a sentence for the reason</span>`
+}
+</script>
+<style>
+  .claim { border-bottom: 2px solid transparent; }
+  .claim.ok { border-bottom-color: color-mix(in srgb, var(--green) 55%, transparent); }
+  .claim.part { border-bottom-color: color-mix(in srgb, var(--amber) 70%, transparent); }
+  .claim.bad { border-bottom-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+</style>

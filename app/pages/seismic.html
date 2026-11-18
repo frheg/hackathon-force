@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Seismic Lookalike</title>
+<link rel="stylesheet" href="../style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+<style>
+  .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; }
+  .thumb { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); padding: 0.5rem; cursor: pointer; }
+  .thumb:hover { border-color: var(--accent); }
+  .thumb canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 6px; display: block; }
+  .thumb .meta { font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
+</style>
+</head>
+<body data-app="seismic" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Explore and appraise</div>
+      <h1>Seismic Lookalike</h1>
+      <p class="lede">Click a feature on a seismic section and find the patches that look like it: by texture alone, or by a
+        metric learned from labelled facies. Never by depth. Scored on a test block the index never saw, against the
+        benchmark's facies labels. The model
+        explains the matches from their numbers, not from the picture.</p>
+    </div>
+    <span class="value-pill">Goes after <b>weeks of manual interpretation per prospect</b></span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="split" style="margin-top: 1rem">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="row"><h2>Section</h2><select id="cube"></select><label class="muted small">number <input id="sec" type="number" min="0" style="width: 5.5rem" /></label></div>
+        <div class="row"><div class="seg" id="mode"><button class="on" data-m="texture" title="Unsupervised: texture signatures only">Texture</button><button data-m="learned" title="Trees trained on the labelled training block predict facies; similarity between predicted facies">Learned</button></div><label class="small"><input type="checkbox" id="lab" /> facies labels</label></div>
+      </div>
+      <input id="slide" type="range" min="0" value="0" style="width: 100%" />
+      <div id="plot" class="chart" style="height: 420px"></div>
+      <div class="legend" id="legend"></div>
+      <p class="muted small" style="margin-top: .5rem">F3 Netherlands, a public stand-in for the event's NCS seismic. Click anywhere on the section. The box is the 32 × 32 patch used as the query.</p>
+    </div>
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><h2>Query</h2><span class="hint" id="qmeta"></span></div>
+        <div id="qbox"><div class="empty">Click the section.</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Reading</h2><button class="btn" id="explain" disabled>Explain the matches</button></div>
+        <div id="estate"></div>
+        <div class="prose" id="etext"><span class="muted">The model reads the query's attributes and what the matches are, and says what the feature probably is and what to check.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 1rem">
+    <div class="panel-head"><h2>Lookalikes</h2><span class="hint" id="mhint">from the indexed training block · click one to see it in its section</span></div>
+    <div class="thumbs" id="matches"></div>
+  </div>
+
+  <div class="panel" style="margin-top: 1rem">
+    <div class="panel-head"><h2>How well does it find the same geology?</h2><span class="hint" id="evalhint"></span></div>
+    <div id="perclass" class="chart" style="height: 280px"></div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, css, palette } = window.studio
+const $ = (id) => document.getElementById(id)
+const FC = ['#5aa8ff', '#2fd3b5', '#f5a524', '#a78bfa', '#f0605d', '#94a3b8']
+let info, cur = { cube: 'test1', i: 0 }, sec, last, mode = 'texture'
+
+const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+const signed = (b64) => new Int8Array(bytes(b64).buffer)
+
+call('api/info').then((d) => {
+  info = d
+  const m = d.metrics
+  $('kpis').innerHTML = m ? [
+    [Math.round(m.precision_at_k * 100) + '%', `right facies in the top ${m.k}, texture only`], [m.learned ? Math.round(m.learned.precision_at_k * 100) + '%' : '–', 'right facies, learned metric', 'good'], [Math.round(m.chance * 100) + '%', 'by chance'],
+    [num(m.queries, 0), 'test queries from a block the index never saw'], [num(m.index_patches, 0), `patches indexed from ${m.sections_indexed} sections`],
+  ].map(([v, k, c]) => `<div class="kpi ${c || ''}"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('') : ''
+  $('legend').innerHTML = d.facies.map((n, i) => `<span><i style="background:${FC[i]}"></i>${esc(n)}</span>`).join('')
+  $('cube').innerHTML = Object.keys(d.cubes).map((c) => `<option value="${c}">${c === 'test1' ? 'test block (held out)' : 'training block (indexed)'}</option>`).join('')
+  $('cube').value = 'test1'
+  if (m) {
+    const names = Object.keys(m.per_class)
+    $('evalhint').textContent = `precision at ${m.k}, patches that are at least ${m.min_purity * 100}% one facies`
+    Plotly.react('perclass', [
+      { type: 'bar', name: 'texture', x: names, y: names.map((n) => m.per_class[n].precision * 100), marker: { color: css('--line-2') }, text: names.map((n) => `${Math.round(m.per_class[n].precision * 100)}%`), textposition: 'outside' },
+      ...(m.learned ? [{ type: 'bar', name: 'learned', x: names, y: names.map((n) => m.learned.per_class[n].precision * 100), marker: { color: css('--accent') }, text: names.map((n) => `${Math.round(m.learned.per_class[n].precision * 100)}%<br>n=${m.per_class[n].queries}`), textposition: 'outside' }] : []),
+    ], plotLayout({ barmode: 'group', margin: { l: 50, r: 10, t: 24, b: 50 }, yaxis: { range: [0, 110], title: { text: '% correct' } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: m.chance * 100, y1: m.chance * 100, line: { color: css('--muted'), dash: 'dash' } }],
+      annotations: [{ xref: 'paper', x: 1, y: m.chance * 100, text: 'chance', showarrow: false, yshift: 10, font: { color: css('--muted'), size: 11 } }] }), plotConfig)
+  }
+  setCube()
+})
+$('cube').onchange = setCube
+$('slide').oninput = () => load(+$('slide').value)
+$('sec').onchange = () => load(+$('sec').value)
+$('lab').onchange = () => sec && draw()
+function setCube() {
+  cur.cube = $('cube').value
+  const n = info.cubes[cur.cube].sections
+  $('slide').max = n - 1; $('sec').max = n - 1
+  load(Math.floor(n / 2))
+}
+
+async function load(i, mark) {
+  const d = await call(`api/section/${cur.cube}/${i}`)
+  cur.i = i
+  $('slide').value = i; $('sec').value = i
+  const a = signed(d.data), [T, S] = d.shape
+  const z = Array.from({ length: S }, (_, s) => Array.from({ length: T }, (_, t) => (a[t * S + s] / 127) * d.scale))
+  const lab = bytes(d.labels)
+  const zl = Array.from({ length: S }, (_, s) => Array.from({ length: T }, (_, t) => lab[t * S + s]))
+  sec = { z, zl, T, S, scale: d.scale }
+  draw(mark)
+}
+
+function draw(mark) {
+  const traces = [{ z: sec.z, type: 'heatmap', colorscale: [[0, '#1d4ed8'], [0.5, '#f8fafc'], [1, '#b91c1c']], zmin: -sec.scale, zmax: sec.scale, showscale: false, hovertemplate: 'trace %{x} · sample %{y}<extra></extra>' }]
+  if ($('lab').checked) traces.push({ z: sec.zl, type: 'heatmap', opacity: 0.4, showscale: false, zmin: 0, zmax: 5, colorscale: FC.flatMap((c, i) => [[i / 6, c], [(i + 1) / 6, c]]), hoverinfo: 'skip' })
+  const shapes = []
+  if (last && last.q.section === cur.i && last.cube === cur.cube) shapes.push(box(last.q.trace, last.q.sample, css('--amber')))
+  if (mark) shapes.push(box(mark.trace, mark.sample, css('--accent')))
+  Plotly.react('plot', traces, plotLayout({ shapes, margin: { l: 50, r: 10, t: 10, b: 36 }, xaxis: { title: { text: 'trace' } }, yaxis: { autorange: 'reversed', title: { text: 'sample (depth)' } } }), plotConfig)
+  $('plot').removeAllListeners?.('plotly_click')
+  $('plot').on('plotly_click', (e) => query(Math.round(e.points[0].x), Math.round(e.points[0].y)))
+}
+const box = (t, s, color) => ({ type: 'rect', x0: t, x1: t + 32, y0: s, y1: s + 32, line: { color, width: 2 }, fillcolor: 'rgba(0,0,0,0)' })
+
+function thumb(b64, scale = 1) {
+  const a = signed(b64), c = document.createElement('canvas')
+  c.width = c.height = 32
+  const g = c.getContext('2d'), im = g.createImageData(32, 32)
+  for (let s = 0; s < 32; s++) for (let t = 0; t < 32; t++) { // stored traces x samples: draw samples downward
+    const v = a[t * 32 + s] / 127, o = (s * 32 + t) * 4
+    const k = Math.round(127.5 + v * 127.5)
+    im.data[o] = v > 0 ? 255 : 255 + v * 160; im.data[o + 1] = 255 - Math.abs(v) * 190; im.data[o + 2] = v < 0 ? 255 : 255 - v * 160; im.data[o + 3] = 255
+  }
+  g.putImageData(im, 0, 0)
+  return c
+}
+
+async function query(trace, sample) {
+  const r = await busy(null, $('estate'), 'Searching 30,000 patches', () => call('api/similar', { cube: cur.cube, section: cur.i, trace, sample, k: 12, mode })).catch(() => null)
+  if (!r) return
+  last = { ...r, cube: cur.cube }
+  $('estate').innerHTML = ''
+  draw()
+  const q = r.query
+  $('qmeta').textContent = `section ${q.section}, trace ${q.trace}, sample ${q.sample}`
+  $('qbox').innerHTML = `<div class="row" style="align-items:flex-start;gap:1rem"><div style="width:120px" id="qthumb"></div><div class="small">
+    <div><span class="tag blue">${esc(q.facies)}</span> <span class="muted">${Math.round(q.purity * 100)}% of the patch</span></div>
+    <div class="muted" style="margin-top:.4rem">${Object.entries(q.features).slice(0, 8).map(([k, v]) => `${esc(k)} <b>${v}</b>`).join(' · ')}</div></div></div>`
+  const c = thumb(q.thumb); c.style.cssText = 'width:120px;height:120px;image-rendering:pixelated;border-radius:6px'; $('qthumb').appendChild(c)
+  const same = r.matches.filter((m) => m.facies === q.facies).length
+  $('mhint').textContent = `${same} of ${r.matches.length} are ${q.facies} · click one to see it in its section`
+  $('matches').innerHTML = ''
+  r.matches.forEach((m) => {
+    const d = document.createElement('div'); d.className = 'thumb'
+    d.appendChild(thumb(m.thumb))
+    d.insertAdjacentHTML('beforeend', `<div class="meta"><span class="tag ${m.facies === q.facies ? 'green' : 'amber'}">${esc(m.facies)}</span><br>similarity ${m.similarity} · section ${m.section}, trace ${m.trace}, sample ${m.sample}</div>`)
+    d.onclick = async () => { $('cube').value = 'train'; cur.cube = 'train'; await load(m.section, m); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+    $('matches').appendChild(d)
+  })
+  $('explain').disabled = false
+  $('etext').innerHTML = '<span class="muted">Press "Explain the matches".</span>'
+}
+
+$('explain').onclick = async () => {
+  if (!last) return
+  const d = await busy($('explain'), $('estate'), 'Reading the attributes and the matches', () => call('api/explain', { query: last.query, matches: last.matches.map(({ thumb, ...m }) => m) })).catch(() => null)
+  if (d) $('etext').textContent = d.text
+}
+</script>
+</body>
+</html>
+<script>
+document.getElementById('mode').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return
+  mode = b.dataset.m
+  document.querySelectorAll('#mode button').forEach((x) => x.classList.toggle('on', x === b))
+  if (last) query(last.query.trace + 16, last.query.sample + 16)
+}
+</script>

@@ -12,7 +12,7 @@ import threading
 import duckdb
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from common import DATA_DIR, ModelBusy, chat, page
 
@@ -24,7 +24,8 @@ MAX_ROWS = 500
 SKIP = re.compile(r"(Url|DateUpdated|DateUpdatedMax|NamePart\d|Utm|UtmZone|(Ns|Ew)(Deg|Min|Sec|Code)|PlotSymbol|GeodeticDatum)$")
 NOTES = """Notes:
 - field_production_monthly: net production per month and field (prfInformationCarrier = field name, as field.fldName).
-  Oil, NGL, condensate and oe (oil equivalents) in million Sm3, gas in billion Sm3, water in million Sm3.
+  Oil, NGL, condensate and oe in million Sm3, gas in billion Sm3, water in million Sm3. prfPrdOeNetMillSm3 (oil
+  equivalents) already sums oil, gas, NGL and condensate: use it alone for "oil equivalents" or "total production".
 - field_reserves: one row per field and fldVersion (year of the estimate); use the newest fldVersion per field.
   Oil, NGL, condensate, OE in million Sm3, gas in billion Sm3.
 - Wellbores: wellbore_exploration (wildcat, appraisal) and wellbore_development. wlbNsDecDeg is latitude,
@@ -106,7 +107,7 @@ def points(cols: list[str], rows: list[list]) -> list[dict]:
 
 
 class Question(BaseModel):
-    q: str
+    q: str = Field(min_length=3, max_length=1000)
 
 
 @router.get("")
@@ -149,8 +150,9 @@ async def ask(body: Question):
             [
                 {
                     "role": "system",
-                    "content": "Answer the question in 2 to 4 plain sentences from the query result. Use the numbers "
-                    "with their units (million Sm3 or billion Sm3 as in the column names). If the result is empty, "
+                    "content": "Answer the question in 2 to 4 plain sentences from the query result. Give volumes "
+                    "with their units (million Sm3 or billion Sm3, as the column names say) and count rows when the "
+                    "result is a list. If the result is empty, "
                     "say so. Do not invent facts that are not in the result.",
                 },
                 {"role": "user", "content": f"Question: {body.q}\nSQL: {sql}\nResult ({len(rows)} rows):\n{sample}"},

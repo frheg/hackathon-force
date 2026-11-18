@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spud Brief</title>
+<link rel="stylesheet" href="../style.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+</head>
+<body data-app="spud" data-root="..">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Drill and complete</div>
+      <h1>Spud Brief</h1>
+      <p class="lede">Before you drill: what every offset well met, by depth. Mud weights and leak-off tests as the
+        window, hazards the model finds in each offset's drilling history, and a brief in the format Havtil asks for.
+        Backtest it on a real well: only wells drilled before it are used.</p>
+    </div>
+    <span class="value-pill">Goes after <b>71% of well-control incidents</b></span>
+  </div>
+
+  <div class="split">
+    <div class="panel">
+      <div class="panel-head"><h2>Where</h2><span class="hint">Click the map for a new location, or backtest a well</span></div>
+      <div id="map" class="map" style="height: 360px"></div>
+      <div class="row end" style="margin-top: 0.8rem">
+        <label class="field grow">Backtest a wellbore<input id="wb" placeholder="e.g. 6507/7-16 S" /></label>
+        <label class="field">Radius (km)<input id="radius" type="number" value="15" min="3" max="60" style="width: 6rem" /></label>
+        <label class="field">Offsets<input id="n" type="number" value="10" min="3" max="25" style="width: 5rem" /></label>
+        <button class="btn" id="go">Build brief</button>
+      </div>
+      <div class="chips" id="examples" style="margin-top: 0.7rem"></div>
+      <div id="state" style="margin-top: 0.6rem"></div>
+    </div>
+    <div class="panel" id="btcard">
+      <div class="panel-head"><h2>Backtest</h2></div>
+      <div id="bt"><div class="empty">Pick a recent well with a known problem: the brief is built only from wells drilled before it, then compared with what the well actually met.</div></div>
+    </div>
+  </div>
+
+  <div id="out" hidden style="margin-top: 1rem">
+    <div class="split">
+      <div class="panel">
+        <div class="panel-head"><h2>Offsets by depth</h2><span class="hint">mud weight (g/cm³) with leak-off tests; hazards on the right</span></div>
+        <div id="depth" class="chart" style="height: 640px"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>The brief</h2><span class="hint" id="meta"></span></div>
+        <div class="prose" id="text"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top: 1rem">
+      <div class="panel-head"><h2>Hazards found in offset histories</h2><span class="hint" id="nh"></span></div>
+      <div class="table-wrap"><table id="hz"></table></div>
+    </div>
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>
+const { esc, call, busy, num, plotLayout, plotConfig, css, palette } = window.studio
+const $ = (id) => document.getElementById(id)
+let point = null, marker, layer
+const HZ = ['shallow gas', 'shallow water flow', 'kick', 'losses', 'overpressure', 'tight hole', 'stuck pipe', 'wellbore instability', 'H2S', 'boulders', 'other']
+
+const map = studio.shelfMap("map")
+layer = L.layerGroup().addTo(map)
+map.on('click', (e) => { point = e.latlng; $('wb').value = ''; if (marker) marker.remove(); marker = L.marker(point).addTo(map) })
+
+call('api/examples').then((xs) => {
+  $('examples').innerHTML = xs.map((x) => `<button class="chip" data-wb="${esc(x.name)}">${esc(x.name)} · ${x.year}</button>`).join('')
+})
+$('examples').onclick = (e) => { const b = e.target.closest('[data-wb]'); if (b) { $('wb').value = b.dataset.wb; run() } }
+$('go').onclick = run
+
+async function run() {
+  const wb = $('wb').value.trim()
+  const body = { radius_km: +$('radius').value, offsets: +$('n').value }
+  if (wb) body.wellbore = wb
+  else if (point) Object.assign(body, { lat: point.lat, lon: point.lng })
+  else { $('state').innerHTML = '<div class="callout warn small">Pick a wellbore or click the map.</div>'; return }
+  const d = await busy($('go'), $('state'), 'Reading offset histories (cached after the first time), building the window and writing the brief', () => call('api/brief', body)).catch(() => null)
+  if (d) show(d)
+}
+
+function show(d) {
+  $('out').hidden = false
+  layer.clearLayers()
+  const accent = css('--accent'), amber = css('--amber'), red = css('--red')
+  d.offsets.forEach((o) => L.circleMarker([o.lat, o.lon], { radius: 5, color: accent, fillColor: accent, fillOpacity: 0.7, weight: 1 }).bindTooltip(`${esc(o.name)} · ${o.km} km · ${esc(o.content || '')}`).addTo(layer))
+  L.circleMarker([d.center.lat, d.center.lon], { radius: 8, color: red, fillColor: red, fillOpacity: 0.85, weight: 2 }).bindTooltip(d.target ? esc(d.target.name) : 'planned').addTo(layer)
+  map.fitBounds(L.latLngBounds(d.offsets.map((o) => [o.lat, o.lon]).concat([[d.center.lat, d.center.lon]])).pad(0.3))
+
+  $('text').innerHTML = esc(d.text).replace(/\[(\d{1,4}\/\d{1,2}-[^\]]+)\]/g, '<span class="tag blue">$1</span>')
+  $('meta').textContent = `${d.offsets.length} offsets · ${d.hazards.length} hazards · ${d.lots.length} leak-off tests` + (d.window ? ` · narrowest window ${d.window.min.margin} g/cm³ at ${Math.round(d.window.min.md)} m` : '')
+
+  // depth chart: mud weight per offset, envelope band, leak-off tests; hazards in a second track
+  const pal = palette()
+  const traces = []
+  Object.entries(d.mud).forEach(([w, ms], i) => ms.length && traces.push({ x: ms.map((m) => m.weight), y: ms.map((m) => m.md), mode: 'lines', name: w, line: { width: 1, color: pal[i % pal.length] }, opacity: 0.55, xaxis: 'x', yaxis: 'y', hovertemplate: `${w}: %{x} g/cm³ at %{y} m<extra></extra>` }))
+  if (d.envelope.length) {
+    traces.push({ x: d.envelope.map((e) => e.max), y: d.envelope.map((e) => e.md), mode: 'lines', line: { color: amber, width: 2, dash: 'dot' }, name: 'offset max', xaxis: 'x', yaxis: 'y' })
+    traces.push({ x: d.envelope.map((e) => e.min), y: d.envelope.map((e) => e.md), mode: 'lines', line: { color: accent, width: 2, dash: 'dot' }, name: 'offset min', xaxis: 'x', yaxis: 'y' })
+  }
+  if (d.window) {
+    const w = d.window.rows
+    traces.push({ x: w.map((r) => r.frac), y: w.map((r) => r.md), mode: 'lines', line: { color: red, width: 2, dash: 'dash' }, name: 'fracture proxy (LOT trend)', xaxis: 'x', yaxis: 'y' })
+    const t = d.window.tight
+    if (t.length) traces.push({ x: t.map((r) => r.mud_max), y: t.map((r) => r.md), mode: 'markers', marker: { symbol: 'x', size: 12, color: red }, name: 'window under 0.06 g/cm³', text: t.map((r) => `margin ${r.margin} g/cm³`), hovertemplate: '%{text} at %{y} m<extra></extra>', xaxis: 'x', yaxis: 'y' })
+  }
+  traces.push({ x: d.lots.map((l) => l.lot), y: d.lots.map((l) => l.md), mode: 'markers', marker: { symbol: 'triangle-left', size: 10, color: red }, name: 'leak-off / FIT', text: d.lots.map((l) => `${l.wellbore} ${l.test} at ${l.md} m`), hovertemplate: '%{text}: %{x} g/cm³<extra></extra>', xaxis: 'x', yaxis: 'y' })
+  const hz = d.hazards.filter((h) => h.depth_m)
+  traces.push({ x: hz.map((h) => h.type), y: hz.map((h) => h.depth_m), mode: 'markers', marker: { size: 11, color: amber, symbol: 'diamond', line: { color: css('--bg'), width: 1 } }, name: 'hazard', text: hz.map((h) => `${h.wellbore}: ${h.quote}`), hovertemplate: '%{text}<extra></extra>', xaxis: 'x2', yaxis: 'y' })
+  if (d.backtest) {
+    const t = d.backtest.target_hazards.filter((h) => h.depth_m)
+    traces.push({ x: t.map((h) => h.type), y: t.map((h) => h.depth_m), mode: 'markers', marker: { size: 13, color: 'rgba(0,0,0,0)', symbol: 'circle', line: { color: red, width: 2 } }, name: `met by ${d.backtest.target}`, text: t.map((h) => h.quote), hovertemplate: '%{text}<extra></extra>', xaxis: 'x2', yaxis: 'y' })
+  }
+  Plotly.react('depth', traces, plotLayout({
+    margin: { l: 60, r: 10, t: 30, b: 90 }, showlegend: true, legend: { orientation: 'h', y: -0.12, font: { size: 10 } },
+    yaxis: { autorange: 'reversed', title: { text: 'Measured depth (m)' } },
+    xaxis: { domain: [0, 0.6], title: { text: 'g/cm³' } },
+    xaxis2: { domain: [0.64, 1], type: 'category', categoryorder: 'array', categoryarray: HZ, tickangle: -45 },
+  }), plotConfig)
+
+  $('nh').textContent = `${d.hazards.length} found`
+  $('hz').innerHTML = '<tr><th>Offset</th><th class="num">km</th><th>Hazard</th><th class="num">MD (m)</th><th>Formation</th><th>From the history</th></tr>' +
+    d.hazards.map((h) => `<tr><td>${esc(h.wellbore)}</td><td class="num">${h.km}</td><td><span class="tag amber">${esc(h.type)}</span></td><td class="num">${h.depth_m ? num(h.depth_m, 0) : '–'}</td><td>${esc(h.formation || '')}</td><td style="white-space:normal">${esc(h.quote)}</td></tr>`).join('')
+
+  if (d.backtest) {
+    const b = d.backtest
+    $('bt').innerHTML = `<div class="kpis">
+      <div class="kpi"><div class="v">${b.met.length}</div><div class="k">hazard types ${esc(b.target)} met</div></div>
+      <div class="kpi good"><div class="v">${b.warned.length}</div><div class="k">flagged by older offsets</div></div>
+      <div class="kpi ${b.missed.length ? 'warn' : ''}"><div class="v">${b.missed.length}</div><div class="k">not in any offset</div></div></div>
+      <p class="small" style="margin-top:.7rem">${b.met.length ? `Met: ${b.met.map((x) => `<span class="tag ${b.warned.includes(x) ? 'green' : 'amber'}">${esc(x)}</span>`).join(' ')}` : 'The well\'s history reports no hazards.'}</p>`
+  } else $('bt').innerHTML = '<div class="empty">New location: no backtest.</div>'
+}
+</script>
+</body>
+</html>
