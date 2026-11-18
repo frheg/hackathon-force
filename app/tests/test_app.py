@@ -182,3 +182,20 @@ def test_prefix_routes():
 
     if os.environ.get("ROOT_PATH"):
         assert c.get(os.environ["ROOT_PATH"] + "/api/apps").status_code == 200
+
+
+def test_scorecard_sample_keeps_topic(monkeypatch):
+    from sketches import scorecard
+
+    async def fake_agent(q):
+        return {"answer": "x", "sources": [], "seconds": 0.1}
+
+    async def fake_judge(q, ref, ans):
+        return {"correct": True, "why": ""}
+
+    monkeypatch.setattr(scorecard.detective, "rag", lambda q, mode: fake_agent(q))
+    monkeypatch.setattr(scorecard, "judge", fake_judge)
+    import asyncio
+
+    out = asyncio.run(scorecard.answers(8, ["closed"]))
+    assert out["answers"]["closed"]["n"] >= 8 and out["answers"]["closed"]["by_topic"]

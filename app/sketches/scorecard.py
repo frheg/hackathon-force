@@ -96,7 +96,8 @@ async def judge(question: str, reference: str, answer: str) -> dict:
 async def answers(n: int, modes: list[str]) -> dict:
     qa = load()
     per_topic = max(1, n // qa.Topic.nunique())
-    sample = qa.groupby("Topic", group_keys=False).apply(lambda g: g.sample(min(len(g), per_topic), random_state=7))
+    # a stratified sample; groupby().apply would drop the Topic column in pandas 3
+    sample = pd.concat([g.sample(min(len(g), per_topic), random_state=7) for _, g in qa.groupby("Topic")])
     out, rows_ = {}, []
     for mode in modes:
         ok, secs = 0, 0.0
