@@ -112,13 +112,19 @@ def unit(id: str, layers_: str | None = Query(None, alias="layers")):
 def _run_map(formation, res, ell, k, spatial, force_cpu=False):
     s = st()
     params = {"formation": formation, "res_deg": res, "ell": ell, "k": k, "use_spatial": spatial}
+    out = None
     if WORKER_URL and not force_cpu:
-        r = httpx.post(f"{WORKER_URL}/run/map", json=params, timeout=600)
-        if r.status_code != 200:
-            raise HTTPException(502, f"worker: {r.status_code} {r.text[:200]}")
-        out = r.json()
+        try:  # the proxy wakes the GPU worker (cold start, minutes the first time); a busy GPU or an error falls back to the CPU
+            r = httpx.post(f"{WORKER_URL}/run/map", json=params, timeout=1800)
+            out = r.json() if r.status_code == 200 else None
+            fallback = None if out else f"worker answered {r.status_code}: {r.text[:120]}"
+        except httpx.HTTPError as e:
+            fallback = f"worker unreachable: {type(e).__name__}"
+        if out is None:
+            out = map_job.run(s.layers["strat"], s.lab, formation, res, ell, k, spatial, dev="cpu")
+            out["fallback"] = fallback
     else:
-        out = map_job.run(s.strat if hasattr(s, "strat") else s.layers["strat"], s.lab, formation, res, ell, k, spatial, dev="cpu" if force_cpu else None)
+        out = map_job.run(s.layers["strat"], s.lab, formation, res, ell, k, spatial, dev="cpu" if force_cpu else None)
     if "error" in out:
         raise HTTPException(404, out["error"])
     return out
@@ -146,7 +152,7 @@ def job_map(formation: str, res: float = 0.02, spatial: bool = True):
     raw = np.array(out["logit"])
     out["rate"] = s.platt(("strat", "spatial") if spatial else ("strat",))(raw.ravel()).reshape(raw.shape).tolist()
     del out["logit"]
-    out["via"] = "worker" if WORKER_URL else "this process"
+    out["via"] = "this process (CPU fallback: " + out["fallback"] + ")" if out.get("fallback") else ("worker" if WORKER_URL else "this process")
     return out
 
 

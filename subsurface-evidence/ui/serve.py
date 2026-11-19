@@ -13,7 +13,7 @@ app = FastAPI(docs_url=None, openapi_url=None)
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST"])
 async def proxy(path: str, req: Request):
-    async with httpx.AsyncClient(timeout=600) as c:
+    async with httpx.AsyncClient(timeout=1800) as c:
         r = await c.request(req.method, f"{BACKEND}/api/{path}", params=req.query_params)
     return Response(r.content, r.status_code, media_type=r.headers.get("content-type"))
 
