@@ -54,6 +54,11 @@ About 125 GB in `data/`, not in git. Everything is public. The datasets the orga
 | DISKOS-QA (1,027 questions over 1,690 Diskos report passages) | NLOD 2.0 | `fetch_data.py diskosqa` |
 | Volve daily drilling reports (1,759, WITSML) | CC BY 4.0 (Hugging Face copy) | `fetch_data.py volve` |
 | F3 Netherlands seismic with facies labels (stand-in for NCS seismic) | CC BY 4.0 | `fetch_data.py seismic` |
+| Parihaka 3D (New Zealand) with six facies labels, 1.7 GB | CC BY 4.0 | `fetch_data.py parihaka` |
+| Penobscot 3D (Nova Scotia) with seven interpreted horizons and dense labels, 2.3 GB | CC BY 4.0 | `fetch_data.py penobscot` |
+| FaultSeg3D: 220 synthetic cubes with fault labels | CC BY-NC 4.0 | `fetch_data.py faultseg3d` |
+
+More public seismic, including what needs your own sign-in (Volve, Smeaheia, Sleipner 4D): `docs/seismic-data.md`.
 
 Zenodo serves each connection at 2 to 3 MB/s, so large files come down as 64 MB pieces over ten connections
 (about 20 MB/s); an interrupted download resumes, and every file is checked against Zenodo's md5.
@@ -68,6 +73,7 @@ From `app/`, once:
     uv run python -m sketches.seismic           # seismic index and its scores, about a minute
     uv run python -m sketches.scorecard retrieval   # DISKOS-QA retrieval scores, a few minutes
     uv run python -m sketches.atlas             # the Data Atlas profiles (data/atlas/), about a minute
+    uv run python -m sketches.greenclay         # green clay labels from all completion reports (docs/greenclay.md), about a minute
     uv run python -m sketches.atlas_seis        # seismic explorer: Adele as int8 copies (1.6 GB) and both cube profiles, under a minute
 
 Then:

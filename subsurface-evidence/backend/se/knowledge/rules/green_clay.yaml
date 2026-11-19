@@ -1,0 +1,57 @@
+# Knowledge base for the green-clay target. Only SOURCED directions. Numbers are learned from data, never typed in here (LOG L006).
+# status: sourced (a source states it) | sourced_unverified (from a search snippet, original not yet read) | inferred (physics, no source for this exact claim)
+# check: how the data tests the rule (se/knowledge/kb.py). verdict: agrees | disagrees | inconclusive | not_testable
+target: green_clay_in_clay_rows
+retrieved: 2026-11-19
+rules:
+  - id: K-GR
+    statement: Glauconite and celadonite carry potassium, so gamma ray is higher where they are present.
+    status: sourced
+    caveat: Feldspar and mica sands are also K-rich. Total GR cannot tell them apart; spectral GR (K, Th, U) can.
+    sources:
+      - {url: "https://en.wikipedia.org/wiki/Glauconite", says: "potassium phyllosilicate (mica group); (K,Na)(Fe,Al,Mg)2(Si,Al)4O10(OH)2"}
+      - {url: "https://spec2000.net/13-lithkut.htm", says: "K-bearing minerals drive the gamma ray; clay typing uses spectral GR"}
+    check: {type: row_auc, feature: GR, direction: "+"}
+  - id: Chl-GR
+    statement: Chlorite has no radioactive elements, so it adds little to gamma ray.
+    status: sourced_unverified
+    sources:
+      - {url: "https://www.searchanddiscovery.com/abstracts/html/2001/annual/abstracts/0648.htm", says: "search snippet 2026-11-19; original not read"}
+    check: {type: not_testable, why: "chlorite and glauconite are pooled in the target; split the kinds to test"}
+  - id: Fe-PEF
+    statement: Iron-rich clays raise the photoelectric factor (PEF follows mean atomic number; Fe is 26).
+    status: inferred
+    caveat: No source gives a number or a direction for glauconite or chlorite PEF. Treated as a hypothesis.
+    sources:
+      - {url: "https://spec2000.net/13-lithkut.htm", says: "PEF is mainly controlled by the mean atomic number of the formation"}
+    check: {type: row_auc, feature: PEF, direction: "+"}
+  - id: Chl-NPHI
+    statement: Iron-rich chlorite has a high neutron response.
+    status: sourced_unverified
+    sources:
+      - {url: "https://repository.tudelft.nl/file/File_56ef3d99-1dfe-4aa5-8924-c34d70c94ad4", says: "search snippet 2026-11-19; original not read"}
+    check: {type: row_auc, feature: NPHI, direction: "+"}
+  - id: Fe-RDEP
+    statement: Iron-rich clays are conductive, so resistivity is lower.
+    status: sourced
+    sources:
+      - {url: "https://www.mdpi.com/2075-163X/15/12/1280", says: "greensands contain iron-rich clay minerals with paramagnetic and conductive effects that bias conventional log interpretation"}
+    check: {type: row_auc, feature: RDEP, direction: "-"}
+  - id: Strat-Lista-Sele
+    statement: Lista is greener than Sele (Lista starts at green-grey bioturbated mudstones; Sele is dark laminated shale).
+    status: sourced
+    sources:
+      - {url: "https://nhm2.uio.no/norges/litho/sele.php", says: "lower boundary where green-grey, bioturbated mudstones of the Lista Formation give way to dark, laminated shales"}
+    check: {type: rate_order, higher: "LISTA FM", lower: "SELE FM"}
+  - id: Strat-Balder
+    statement: Balder carries green tuffs, so its green share should be at least the overall rate.
+    status: sourced
+    sources:
+      - {url: "https://nhm2.uio.no/norges/litho/balder.php", says: "laminated shales with interbedded grey, green and buff volcanic tuffs"}
+    check: {type: rate_vs_overall, formation: "BALDER FM", direction: "+"}
+  - id: Greensand-bias
+    statement: Conventional log models are biased in greensands; calibrate with core, spectral GR and NMR.
+    status: sourced
+    sources:
+      - {url: "https://www.mdpi.com/2075-163X/15/12/1280", says: "recommends combining core analysis, spectral gamma ray and NMR with conventional logs"}
+    check: {type: not_testable, why: "advice, not a direction"}

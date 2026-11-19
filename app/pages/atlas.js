@@ -650,6 +650,7 @@
     checkshot: ['Checkshot', 'A survey that times a surface shot down to known depths in a well: the time to depth link.'],
     iou: ['IoU', 'Intersection over union: overlap of the predicted and true area of a class. Mean IoU over classes is the usual segmentation score, fair to small classes.'],
     imbalance: ['Class imbalance', 'Some labels are far rarer than others (Zechstein 1.5 %). A model can ignore them and still look accurate.'],
+    au: ['a.u. (arbitrary units)', 'Seismic amplitude has no physical unit here: processing scaled it, so only the sign and the ratio between values mean anything. Adele values are typically within ±800 a.u.; F3 is scaled to −1…+1.'],
     split: ['Train / test split', 'The training block teaches a model; test blocks it never saw check it. F3\'s test 1 lies beside the training block, test 2 on its far side.'],
   })
   const SEIS_TERMS = ['seismic', 'inline', 'crossline', 'timeslice', 'trace', 'sample', 'twt', 'bin', 'amplitude', 'clip', 'wiggle', 'spectrum', 'dominant', 'tuning',
@@ -720,7 +721,7 @@
   // the explorer: slices in three directions, amplitude or coherence, F3 labels on top, click for the trace;
   // axes on the image, the slider and axes in line numbers or distance, time or (assumed-velocity) depth
   function explorer(el, cube, meta, onTrace) {
-    const st = { axis: 'inline', split: 'train', gain: 0, cmap: 'rwb', layer: 'amp', labels: cube === 'f3', alpha: 0.45, pick: null, hu: 'line', vu: 'time', v: 0 }
+    const st = { axis: 'inline', split: 'train', gain: 0, cmap: 'rwb', layer: 'amp', labels: cube === 'f3', alpha: 0.45, pick: null, hu: 'line', vu: 'time', v: 0, mode: false, meas: null }
     let geo = geometry(cube, meta, st.split), img = null, running = false, want = null
     Object.assign(st, { ...geo.start }, { gain: geo.gain, v: geo.vel })
     // one vertical exaggeration for the section and the 3D box (1 = true scale); the default makes a section about 1.8 wide to 1 tall
@@ -732,6 +733,7 @@
         <label class="small">Show <select id="xl"><option value="amp">amplitude</option><option value="coh">coherence (faults)</option></select></label>
         <label class="small">Colours <select id="xc"><option value="rwb">red-white-blue</option><option value="grey">grey</option></select></label>
         <label class="small">Gain <input id="xg" type="range" min="0.5" max="10" step="0.1" value="${st.gain}" style="width:110px;vertical-align:middle" /></label>
+        <button class="btn sm" id="xms" title="Click two points on the picture to measure the distance between them">Measure</button>
         ${cube === 'f3' ? `<label class="small"><input id="xf" type="checkbox" checked /> labels</label><label class="small">Label opacity <input id="xo" type="range" min="0" max="0.9" step="0.05" value="${st.alpha}" style="width:80px;vertical-align:middle" /></label>` : ''}
       </div>
       <div class="row" style="gap:.5rem 1rem;flex-wrap:wrap;align-items:center;margin-top:.5rem">
@@ -744,23 +746,25 @@
         <span class="muted small">the same in the section and the 3D box; 1× is true scale</span>
       </div>
       <div class="row" style="margin:.6rem 0 .4rem;gap:.6rem;align-items:center"><button class="btn sm" id="xm">−</button>
-        <span id="xlo" class="small muted mono" style="min-width:64px;text-align:right"></span>
-        <input id="xi" type="range" min="0" style="flex:1" /><span id="xhi" class="small muted mono" style="min-width:64px"></span><button class="btn sm" id="xp">+</button>
+        <span id="xlo" class="small muted mono" style="min-width:104px;text-align:right"></span>
+        <input id="xi" type="range" min="0" style="flex:1" /><span id="xhi" class="small muted mono" style="min-width:104px"></span><button class="btn sm" id="xp">+</button>
         <div id="xn" class="mono" style="min-width:190px;text-align:right;line-height:1.3"></div></div>
       <div class="axframe" id="axframe">
         <div class="axt-y" id="xty"></div><svg class="ax" id="xsy"></svg>
-        <div class="canvas-wrap" style="position:relative"><canvas id="xcv" style="height:auto;cursor:crosshair"></canvas><div id="xbusy" class="muted small" style="position:absolute;top:6px;right:10px"></div></div>
+        <div class="canvas-wrap" style="position:relative"><canvas id="xcv" style="height:auto;cursor:crosshair"></canvas><canvas id="xov" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none"></canvas><div id="xbusy" class="muted small" style="position:absolute;top:6px;right:10px"></div></div>
         <div></div><div></div><svg class="ax" id="xsx"></svg>
         <div></div><div></div><div class="axt-x" id="xtx"></div>
       </div>
       <div class="row small muted" style="justify-content:space-between;margin-top:.25rem"><span id="xe0"></span><span id="xr" class="mono" style="color:var(--ink-2)">Hover for values, click for the trace</span><span id="xe1"></span></div>
       <div class="row" style="justify-content:space-between;margin-top:.5rem"><div class="meta" id="xinfo" style="margin:0"></div><div class="cbar" id="xcb"></div></div>
+      <div id="xmeas" class="small" style="margin-top:.5rem"></div>
+      <div style="margin-top:.7rem"><div class="small muted" style="margin-bottom:.25rem">Distance between neighbouring data points</div><div id="xsp" class="wrap"></div></div>
       <div class="small muted" id="xev" style="margin-top:.3rem"></div>
       ${cube === 'f3' ? legend(meta.facies.map((f, i) => [FAC()[i], f])) : ''}</div>
       <aside class="x3d"><div class="x3h"><b class="x3title">Where you are</b>
-          <span class="x3tools row" style="gap:.3rem"><button class="btn sm" data-cam="iso">Reset</button><button class="btn sm" data-cam="top">Top</button><button class="btn sm" data-cam="side">Side</button></span>
+          <span class="x3tools row" style="gap:.3rem"><button class="btn sm" id="x3s" title="Make the 3D box larger or smaller">Larger</button><button class="btn sm" data-cam="iso">Reset</button><button class="btn sm" data-cam="top">Top</button><button class="btn sm" data-cam="side">Side</button></span>
           <button class="btn sm" id="x3t" title="Hide or show the 3D model"></button></div>
-        <div class="x3body"><div class="x3opts small row" style="gap:.4rem .9rem;margin:.4rem 0"><label><input id="x3a" type="checkbox" checked /> all other slices, faint</label> <label>in <select id="x3d"><option value="this">this direction</option><option value="all">all three directions</option></select></label> <label>sheets <input id="x3n" type="range" min="4" max="60" step="1" value="24" style="width:80px;vertical-align:middle" /> <b id="x3nv" class="mono">24</b></label> <label>faintness <input id="x3o" type="range" min="0.03" max="0.4" step="0.01" value="0.12" style="width:80px;vertical-align:middle" /></label></div><div id="x3" style="height:${Math.round(Math.max(400, Math.min(820, innerHeight * 0.58)))}px"></div><div id="x3info" class="small" style="margin-top:.4rem"></div></div></aside></div>`
+        <div class="x3body"><div class="x3opts small row" style="gap:.4rem .9rem;margin:.4rem 0"><label><input id="x3a" type="checkbox" checked /> all other slices, faint</label> <label>in <select id="x3d"><option value="this">this direction</option><option value="all">all three directions</option></select></label> <label>sheets <input id="x3n" type="range" min="4" max="60" step="1" value="24" style="width:80px;vertical-align:middle" /> <b id="x3nv" class="mono">24</b></label> <label>faintness <input id="x3o" type="range" min="0.03" max="0.4" step="0.01" value="0.12" style="width:80px;vertical-align:middle" /></label></div><div id="x3"></div><div id="x3info" class="small" style="margin-top:.4rem"></div></div></aside></div>`
     const q = (id) => el.querySelector(`#${id}`)
     const cv = q('xcv')
     const z = (t) => (st.v * t) / 2000 // approximate depth in metres from two-way time in ms
@@ -786,14 +790,14 @@
     function sliderLabels() {
       const i = st[st.axis], n = geo.n[st.axis], [a, b] = slider(i)
       q('xn').innerHTML = `<b>${esc(a)}</b><br><span class="muted small">${esc(b)}</span>`
-      const end = (j) => { const t = slider(j)[0]; return t.replace(/^(inline|crossline) /, '').replace(/ m from .*/, ' m').replace(/ ms$/, ' ms') }
+      const end = (j) => slider(j)[0].replace(/ m from .*/, ' m') // keep the unit: inline 4175, 0 m, 1,500 ms
       q('xlo').textContent = end(0); q('xhi').textContent = end(n - 1)
     }
     const span = (a) => { // the value at the first and last pixel of an axis, in the unit shown
       if (a === 'time') { const t0 = geo.t(0), t1 = geo.t(geo.n.time - 1); return st.vu === 'depth' ? [z(t0), z(t1)] : [t0, t1] }
       return st.hu === 'dist' ? [0, (a.n - 1) * a.m] : [a.line(0), a.line(a.n - 1)]
     }
-    const title = (a) => (a === 'time' ? (st.vu === 'depth' ? `approx. depth (m), at ${num(st.v)} m/s` : 'two-way time (ms)') : st.hu === 'dist' ? `distance from ${a.from} (m)` : a.name)
+    const title = (a) => (a === 'time' ? (st.vu === 'depth' ? `approx. depth (m), at ${num(st.v)} m/s` : 'two-way time (ms)') : st.hu === 'dist' ? `distance from ${a.from} (m)` : `${a.name} number`)
 
     // ---- decoration: tick axes, colour bar, facts about this slice
     function axes() {
@@ -816,15 +820,15 @@
         const dz = z(geo.t(geo.n.time - 1)) - z(geo.t(0))
         parts.push(`vertical section, ${km(w)} wide`, `${num(geo.t(geo.n.time - 1) - geo.t(0))} ms tall (≈ ${km(dz)} at ${num(st.v)} m/s)`, `${num(x.n)} traces`, `vertical exaggeration ${num(st.ve, 1)}× (1× is true scale)`)
       } else parts.push(`map view, ${km(w)} by ${km((y.n - 1) * y.m)}`, `${num(x.n)} × ${num(y.n)} traces`, `north ${cube === 'adele' ? 'is up' : 'direction not given in the data'}`)
-      parts.push(`full colour at ±${num(geo.amp(127) / st.gain, cube === 'f3' ? 2 : 0)}`)
+      parts.push(`full colour at ±${num(geo.amp(127) / st.gain, cube === 'f3' ? 2 : 0)} a.u.`)
       q('xinfo').innerHTML = parts.map((p) => `<span>${esc(p)}</span>`).join('')
     }
     function bar() {
       const c = geo.amp(127) / st.gain, d = cube === 'f3' ? 2 : 0
       const grey = st.cmap === 'grey' || (img?.labels && st.labels)
       q('xcb').innerHTML = img?.coh
-        ? `<span>continuous</span><i style="background:linear-gradient(90deg,#000,#fff)"></i><span>broken (up to ${num(img.top, 2)})</span>`
-        : `<span>−${num(c, d)}</span><i style="background:${grey ? 'linear-gradient(90deg,#010101,#808080,#fff)' : 'linear-gradient(90deg,rgb(40,40,255),#fff,rgb(255,40,40))'}"></i><span>+${num(c, d)}</span><span>amplitude</span>`
+        ? `<span>0 = layers continuous</span><i style="background:linear-gradient(90deg,#000,#fff)"></i><span>${num(img.top, 2)} = most broken here</span><span>discontinuity (1 − coherence, no unit)</span>`
+        : `<span>−${num(c, d)}</span><i style="background:${grey ? 'linear-gradient(90deg,#010101,#808080,#fff)' : 'linear-gradient(90deg,rgb(40,40,255),#fff,rgb(255,40,40))'}"></i><span>+${num(c, d)}</span><span>amplitude (a.u.)</span>`
     }
     // ---- the 3D model: the cube as a transparent box with the slice planes in it, a faint stack of the other slices,
     // and the current plane strong on top; click a plane to move the slices there
@@ -833,7 +837,16 @@
     const st3 = { all: true, n: 24, op: 0.12, dirs: 'this' }
     try { three = localStorage.getItem('atlas-3d') !== 'closed' } catch { /* no storage: open */ }
     const zOf = (k) => (st.vu === 'depth' ? z(geo.t(k)) : geo.t(k))
+    // the size of the 3D box: normal or large (more of the page width), and as tall as the window allows
+    let large = false
+    try { large = localStorage.getItem('atlas-3d-size') === 'large' } catch { /* normal */ }
+    const size3d = () => {
+      q('xsplit').classList.toggle('large', large)
+      q('x3s').textContent = large ? 'Smaller' : 'Larger'
+      q('x3').style.height = `${Math.round(Math.max(480, Math.min(large ? 1000 : 860, innerHeight * (large ? 0.82 : 0.68))))}px`
+    }
     const CAM = { iso: { eye: { x: 1.55, y: -2.1, z: 1.2 }, up: { x: 0, y: 0, z: 1 } }, top: { eye: { x: 0, y: -0.001, z: 3.4 }, up: { x: 0, y: 1, z: 0 } }, side: { eye: { x: 0, y: -3.4, z: 0.03 }, up: { x: 0, y: 0, z: 1 } } }
+    const cam = (name) => { const c = CAM[name], f = large ? 1.12 : 1; return { up: c.up, eye: { x: c.eye.x * f, y: c.eye.y * f, z: c.eye.z * f } } } // a larger panel shows more scene, so step back
     const RWB = [[0, 'rgb(40,40,255)'], [0.5, 'rgb(255,255,255)'], [1, 'rgb(255,40,40)']], GREY = [[0, 'rgb(1,1,1)'], [0.5, 'rgb(128,128,128)'], [1, 'rgb(255,255,255)']]
     const flat = { ambient: 1, diffuse: 0, specular: 0 }
     function loadVolume() { // a coarse copy of the cube, once per cube and block
@@ -943,9 +956,9 @@
         const zm = Math.abs(z(geo.t(NS - 1)) - z(geo.t(0))), big = 2 / Math.max(Lx, Ly, st.ve * zm) // the box is drawn at the same vertical exaggeration as the section
         Plotly.react(div, traces, {
           uirevision: 'x3', margin: { l: 0, r: 0, t: 0, b: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', showlegend: false, font: { color: muted },
-          scene: { aspectmode: 'manual', aspectratio: { x: Lx * big, y: Ly * big, z: st.ve * zm * big }, bgcolor: 'rgba(0,0,0,0)', camera: CAM.iso,
-            xaxis: ax(st.hu === 'dist' ? 'distance (m)' : geo.ax.inline.x.name, { range: [0, Lx], ...ticks(Lx, mx, geo.ax.inline.x.line, st.hu === 'dist') }),
-            yaxis: ax(st.hu === 'dist' ? 'distance (m)' : geo.ax.crossline.x.name, { range: [0, Ly], ...ticks(Ly, my, geo.ax.crossline.x.line, st.hu === 'dist') }),
+          scene: { aspectmode: 'manual', aspectratio: { x: Lx * big, y: Ly * big, z: st.ve * zm * big }, bgcolor: 'rgba(0,0,0,0)', camera: cam('iso'),
+            xaxis: ax(st.hu === 'dist' ? 'distance (m)' : `${geo.ax.inline.x.name} number`, { range: [0, Lx], ...ticks(Lx, mx, geo.ax.inline.x.line, st.hu === 'dist') }),
+            yaxis: ax(st.hu === 'dist' ? 'distance (m)' : `${geo.ax.crossline.x.name} number`, { range: [0, Ly], ...ticks(Ly, my, geo.ax.crossline.x.line, st.hu === 'dist') }),
             zaxis: ax(st.vu === 'depth' ? 'depth (m)' : 'time (ms)', { range: [z1, z0], tickvals: zt, ticktext: zt.map((v) => num(v)) }) },
         }, { displayModeBar: false, responsive: true })
       } else { // only the planes moved: update just those traces, not the stack
@@ -974,6 +987,13 @@
         <div class="muted" style="margin-top:.3rem">${st3.all ? (vol ? `The faint sheets are ${st3.dirs === 'all' ? 'slices in all three directions' : `${st.axis} slices spread through the cube`}, drawn from a coarse copy of the data: they show where things are, not fine detail. The strong plane is the one the slider moves.` : 'Loading the coarse copy of the cube for the faint sheets…') : 'The plane with the picture is the one the slider moves.'}
         Drag to turn it, scroll to zoom, click a plane to put the slices there.</div>`
     }
+    q('x3s').onclick = () => {
+      large = !large
+      try { localStorage.setItem('atlas-3d-size', large ? 'large' : 'normal') } catch { /* fine */ }
+      size3d()
+      setTimeout(() => { if (window.Plotly && q('x3').data) Plotly.Plots.resize(q('x3')); fit(); decorate() }, 80)
+    }
+    size3d()
     q('x3t').onclick = () => {
       three = !three
       try { localStorage.setItem('atlas-3d', three ? 'open' : 'closed') } catch { /* fine */ }
@@ -984,8 +1004,49 @@
     q('x3d').onchange = () => { st3.dirs = q('x3d').value; scene3d() }
     q('x3n').oninput = () => { st3.n = +q('x3n').value; q('x3nv').textContent = st3.n; scene3d() }
     q('x3o').oninput = () => { st3.op = +q('x3o').value; scene3d() }
-    el.querySelectorAll('[data-cam]').forEach((b) => { b.onclick = () => Plotly.relayout(q('x3'), { 'scene.camera': CAM[b.dataset.cam] }) })
-    const decorate = () => { axes(); facts(); bar(); scene3d() }
+    el.querySelectorAll('[data-cam]').forEach((b) => { b.onclick = () => Plotly.relayout(q('x3'), { 'scene.camera': cam(b.dataset.cam) }) })
+    // ---- the distance between neighbouring data points, in each direction
+    function spacing() {
+      const dt = geo.t(1) - geo.t(0), mx = geo.ax.inline.x.m, my = geo.ax.crossline.x.m
+      q('xsp').innerHTML = table([['Direction', (r) => `<b>${r[0]}</b>`], ['Between neighbours', (r) => r[1], 'num'], ['Points per km', (r) => r[2], 'num'], ['What that is', (r) => `<span class="muted">${r[3]}</span>`]], [
+        ['Along an inline (crossline direction)', `${num(mx, 1)} m`, `${num(1000 / mx)} traces`, 'neighbouring traces on the same inline'],
+        ['Between inlines (inline direction)', `${num(my, 1)} m`, `${num(1000 / my, 1)} lines`, cube === 'adele' ? 'every second inline was kept, so a full grid would be 18.75 m' : 'a square grid'],
+        ['Down a trace (time)', `${dt} ms ≈ ${num(z(dt), 1)} m`, `${num(1000 / z(dt))} samples`, `${dt} ms is the time step; the metres are rock at the assumed ${num(st.v)} m/s`],
+        ['Diagonally (next trace on the next inline)', `${num(Math.hypot(mx, my), 1)} m`, '', 'corner to corner on the map']], 400)
+    }
+    // ---- measuring: click two points on the picture
+    function overlay() {
+      const ov = q('xov'), W = cv.clientWidth, H = cv.clientHeight
+      ov.width = W; ov.height = H
+      const g = ov.getContext('2d'), m = st.meas
+      g.clearRect(0, 0, W, H)
+      if (!st.mode || !m || !img) return
+      const px = (p) => [((p[1] / img.step + 0.5) / img.w) * W, ((p[0] / img.step + 0.5) / img.h) * H]
+      const pts = [m.a, m.b || m.live].filter(Boolean).map(px)
+      const draw = (col, w) => {
+        g.strokeStyle = col; g.lineWidth = w; g.beginPath()
+        if (pts.length === 2) { g.moveTo(pts[0][0], pts[0][1]); g.lineTo(pts[1][0], pts[1][1]) }
+        g.stroke()
+        for (const [x, y] of pts) { g.beginPath(); g.arc(x, y, 5, 0, 7); g.stroke() }
+      }
+      draw('#fff', 5); draw('#111', 2)
+    }
+    function measureText() {
+      const el_ = q('xmeas'), m = st.meas, b = m && (m.b || m.live)
+      if (!st.mode) { el_.innerHTML = ''; return }
+      if (!m || !b) { el_.innerHTML = '<span class="muted">Measure: click two points on the picture. Click again to start over.</span>'; return }
+      const { x, y } = geo.ax[st.axis], dc = Math.abs(b[1] - m.a[1]), dr = Math.abs(b[0] - m.a[0]), dx = dc * x.m
+      let parts
+      if (y === 'time') {
+        const dtms = dr * (geo.t(1) - geo.t(0)), dz = z(dtms), dist = Math.hypot(dx, dz)
+        parts = [`${num(dx)} m across (${num(dc)} ${x.name === 'crossline' ? 'traces' : 'lines'})`, `${num(dtms)} ms down ≈ ${num(dz)} m (${num(dr)} samples)`, `straight line ${num(dist)} m`, `slope ${num((Math.atan2(dz, dx) * 180) / Math.PI, 1)}° (true scale, whatever the exaggeration)`]
+      } else {
+        const dy = dr * y.m
+        parts = [`${num(dx)} m ${cube === 'adele' ? 'east-west' : 'along the crossline axis'} (${num(dc)} ${x.name === 'crossline' ? 'traces' : 'lines'})`, `${num(dy)} m ${cube === 'adele' ? 'north-south' : 'along the inline axis'} (${num(dr)} ${y.name === 'inline' ? 'lines' : 'traces'})`, `distance ${num(Math.hypot(dx, dy))} m`]
+      }
+      el_.innerHTML = `<b>Measured${m.b ? '' : ' (live)'}:</b> ${parts.map(esc).join(' · ')}`
+    }
+    const decorate = () => { axes(); facts(); bar(); spacing(); overlay(); measureText(); scene3d() }
 
     function paint() {
       if (!img) return
@@ -1046,16 +1107,23 @@
     }
     cv.onmousemove = (ev) => {
       if (!img) return
+      if (st.mode && st.meas && !st.meas.b) { const [r0, c0] = cell(ev); st.meas.live = [r0 * img.step, c0 * img.step]; overlay(); measureText() }
       const [r, c] = cell(ev), i = r * img.w + c
       if (r < 0 || c < 0 || r >= img.h || c >= img.w) return
       const [il, xl, k] = geo.at[st.axis](r * img.step, c * img.step, st)
-      const val = img.coh ? `discontinuity ${(img.coh[i] / 255 * img.top).toFixed(2)}` : `amplitude ${num(geo.amp(img.data[i]), cube === 'f3' ? 2 : 0)}${Math.abs(img.data[i]) === 127 ? ' (clipped)' : ''}`
+      const val = img.coh ? `discontinuity ${(img.coh[i] / 255 * img.top).toFixed(2)} (0 = continuous, 1 = broken)` : `amplitude ${num(geo.amp(img.data[i]), cube === 'f3' ? 2 : 0)} a.u.${Math.abs(img.data[i]) === 127 ? ' (clipped)' : ''}`
       const xy = geo.xy?.(il, xl)
-      q('xr').textContent = `inline ${geo.il(il)} · crossline ${geo.xl(xl)}${xy ? ` · E ${num(xy[0])} N ${num(xy[1])}` : ''} · ${num(geo.t(k))} ms ≈ ${num(z(geo.t(k)))} m · ${val}${img.labels ? ` · ${meta.facies[img.labels[i]]}` : ''}`
+      q('xr').textContent = `inline ${geo.il(il)} · crossline ${geo.xl(xl)}${xy ? ` · E ${num(xy[0])} m, N ${num(xy[1])} m (UTM)` : ''} · ${num(geo.t(k))} ms ≈ ${num(z(geo.t(k)))} m · ${val}${img.labels ? ` · ${meta.facies[img.labels[i]]}` : ''}`
     }
     cv.onclick = (ev) => {
       if (!img) return
       const [r, c] = cell(ev)
+      if (st.mode) { // measuring: the first click starts, the second ends, the third starts again
+        const p = [r * img.step, c * img.step]
+        st.meas = !st.meas || st.meas.b ? { a: p, b: null, live: null } : { ...st.meas, b: p, live: null }
+        overlay(); measureText()
+        return
+      }
       const [il, xl, k] = geo.at[st.axis](r * img.step, c * img.step, st)
       st.pick = [il, xl, k]; Object.assign(st, { inline: il, crossline: xl, time: k })
       paint(); onTrace?.({ il, xl, k, split: st.split, geo })
@@ -1064,21 +1132,27 @@
     q('xi').onchange = () => pump(false) // released: the full-resolution slice
     q('xm').onclick = () => { st[st.axis] -= 1; pump() }
     q('xp').onclick = () => { st[st.axis] += 1; pump() }
-    q('xa').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; st.axis = b.dataset.a; q('xa').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); pump() }
+    q('xa').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; st.meas = null; st.axis = b.dataset.a; q('xa').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); pump() }
     q('xl').onchange = () => { st.layer = q('xl').value; pump() }
     q('xc').onchange = () => { st.cmap = q('xc').value; paint() }
     q('xg').oninput = () => { st.gain = +q('xg').value; paint() }
     const units = () => { sliderLabels(); decorate() }
     q('xhu').onchange = () => { st.hu = q('xhu').value; units() }
     q('xvu').onchange = () => { st.vu = q('xvu').value; q('xvw').hidden = st.vu !== 'depth'; units() }
+    q('xms').onclick = () => {
+      st.mode = !st.mode; st.meas = null
+      q('xms').classList.toggle('on', st.mode)
+      cv.style.cursor = st.mode ? 'cell' : 'crosshair'
+      overlay(); measureText()
+    }
     q('xve').oninput = () => { st.ve = +q('xve').value; q('xvev').textContent = `${st.ve}×`; fit(); decorate() }
     q('xv').oninput = () => { st.v = Math.max(500, +q('xv').value || geo.vel); fit(); units() }
     if (cube === 'f3') {
-      q('xs').onchange = () => { st.split = q('xs').value; geo = geometry(cube, meta, st.split); Object.assign(st, geo.start, { pick: null }); pump() }
+      q('xs').onchange = () => { st.meas = null; st.split = q('xs').value; geo = geometry(cube, meta, st.split); Object.assign(st, geo.start, { pick: null }); pump() }
       q('xf').onchange = () => { st.labels = q('xf').checked; st.layer === 'coh' ? pump() : paint() }
       q('xo').oninput = () => { st.alpha = +q('xo').value; paint() }
     }
-    addEventListener('resize', () => { fit(); decorate() })
+    addEventListener('resize', () => { size3d(); fit(); decorate() })
     pump()
     return { go: (axis, i, layer) => { st.axis = axis; st[axis] = i; if (layer) { st.layer = layer; q('xl').value = layer } q('xa').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.a === axis)); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); pump() } }
   }
@@ -1088,7 +1162,7 @@
     el.innerHTML = '<span class="thinking"><span class="spin"></span>Reading the trace</span>'
     const t = await get(`api/seis/trace/${cube}?il=${il}&xl=${xl}&split=${split}`)
     const avg = cube === 'adele' ? meta.spectrum : meta.splits[split].spectrum
-    el.innerHTML = `<div class="row" style="gap:1rem;margin-bottom:.5rem"><b>Inline ${t.il} · crossline ${t.xl}</b>${t.rms !== undefined ? `<span class="muted small">RMS ${num(t.rms)} · peak ${num(t.peak)}${t.peak > 10 * meta.amplitude.percentiles['99.9'] ? ' <span class="tag red">spike</span>' : ''}${t.peak === 0 ? ' <span class="tag">dead trace</span>' : ''}</span>` : ''}</div>
+    el.innerHTML = `<div class="row" style="gap:1rem;margin-bottom:.5rem"><b>Inline ${t.il} · crossline ${t.xl}</b>${t.rms !== undefined ? `<span class="muted small">RMS ${num(t.rms)} a.u. · peak ${num(t.peak)} a.u.${t.peak > 10 * meta.amplitude.percentiles['99.9'] ? ' <span class="tag red">spike</span>' : ''}${t.peak === 0 ? ' <span class="tag">dead trace</span>' : ''}</span>` : ''}</div>
       <div class="grid g2"><div>${chart('tw', 460)}<p class="how"><b>How to read it:</b> the ${T('wiggle', 'wiggle')}: amplitude across, time down. Each swing is a boundary between layers; the filled side is positive.${t.labels ? ' The coloured bands behind it are the label (rock unit) at each sample.' : ''}</p></div>
       <div>${chart('tsp', 220)}<p class="how"><b>How to read it:</b> the ${T('spectrum')} of this trace against the cube's average. Energy far below the ${T('nyquist', 'Nyquist')} limit (125 Hz) means coarse vertical detail.</p>
       ${t.header ? `<div class="table-wrap" style="max-height:200px;margin-top:.6rem">${table([['Trace header field', (r) => esc(r.name)], ['Byte', (r) => r.byte, 'num'], ['Value', (r) => num(r.value), 'num mono'], ['Holds', (r) => `<span class="muted">${esc(r.what)}</span>`]], t.header, 200)}</div>` : ''}</div></div>`
@@ -1102,19 +1176,19 @@
     }
     plot('tw', [{ x: t.a.map((v) => Math.max(0, v)), y: t.t, type: 'scatter', mode: 'lines', line: { width: 0 }, fill: 'tozerox', fillcolor: css('--ink-2'), hoverinfo: 'skip', showlegend: false },
       { x: t.a, y: t.t, type: 'scatter', mode: 'lines', line: { color: css('--ink'), width: 1 }, showlegend: false, hovertemplate: '%{y} ms: %{x:.4~g}<extra></extra>' }],
-    { yaxis: { autorange: 'reversed', title: { text: 'two-way time (ms)' } }, xaxis: { range: [lo - pad, hi + pad], title: { text: 'amplitude' } }, shapes, margin: { l: 64, r: 10, t: 10, b: 44 } })
+    { yaxis: { autorange: 'reversed', title: { text: 'two-way time (ms)' } }, xaxis: { range: [lo - pad, hi + pad], title: { text: 'amplitude (a.u.)' } }, shapes, margin: { l: 64, r: 10, t: 10, b: 44 } })
     plot('tsp', [{ x: avg.hz, y: avg.amp, type: 'scatter', mode: 'lines', name: 'cube average', line: { color: S(0), width: 2, dash: 'dot' } },
       { x: t.hz, y: t.spec, type: 'scatter', mode: 'lines', name: 'this trace', line: { color: S(1), width: 2 } }],
-    { xaxis: { title: { text: 'frequency (Hz)' }, range: [0, 80] }, yaxis: { title: { text: 'relative energy' } }, legend: { orientation: 'h', y: 1.18 } })
+    { xaxis: { title: { text: 'frequency (Hz)' }, range: [0, 80] }, yaxis: { title: { text: 'relative energy (peak = 1)' } }, legend: { orientation: 'h', y: 1.18 } })
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 
   const spectrumChart = (id, sp) => plot(id, [{ x: sp.hz, y: sp.amp, type: 'scatter', mode: 'lines', line: { color: S(1), width: 2 }, hovertemplate: '%{x:.1f} Hz: %{y:.2f}<extra></extra>', showlegend: false }],
-    { xaxis: { title: { text: 'frequency (Hz)' }, range: [0, 80] }, yaxis: { title: { text: 'relative energy' } },
+    { xaxis: { title: { text: 'frequency (Hz)' }, range: [0, 80] }, yaxis: { title: { text: 'relative energy (peak = 1)' } },
       shapes: [{ type: 'rect', x0: sp.half_power_hz[0], x1: sp.half_power_hz[1], yref: 'paper', y0: 0, y1: 1, fillcolor: S(1), opacity: 0.1, line: { width: 0 } }],
       annotations: [{ x: (sp.half_power_hz[0] + sp.half_power_hz[1]) / 2, yref: 'paper', y: 1, text: 'half power', showarrow: false, font: { color: css('--muted'), size: 11 } }] })
-  const rmsTimeChart = (id, ys, t0, dt, ytitle = 'two-way time (ms)') => plot(id, [{ x: ys, y: ys.map((_, k) => t0 + dt * k), type: 'scatter', mode: 'lines', line: { color: S(1), width: 2 }, hovertemplate: '%{y} ms: %{x:.3~g}<extra></extra>', showlegend: false }],
-    { yaxis: { autorange: 'reversed', title: { text: ytitle } }, xaxis: { title: { text: 'RMS amplitude' } } })
+  const rmsTimeChart = (id, ys, t0, dt, ytitle = 'two-way time (ms)', unit = 'a.u.') => plot(id, [{ x: ys, y: ys.map((_, k) => t0 + dt * k), type: 'scatter', mode: 'lines', line: { color: S(1), width: 2 }, hovertemplate: '%{y} ms: %{x:.3~g}<extra></extra>', showlegend: false }],
+    { yaxis: { autorange: 'reversed', title: { text: ytitle } }, xaxis: { title: { text: `RMS amplitude (${unit})` } } })
 
   // ---------- seismic overview ----------
   async function seismicOverview() {
@@ -1133,7 +1207,7 @@
       ['Time window', '1,500 to 5,500 ms, 1,001 samples at 4 ms', '255 samples at 4 ms (about 1 s)'],
       ['Area', '34 × 11 km, 384 km²', 'train 17.5 × 10 km; test blocks of 88 and 75 km² beside it'],
       ['Frequency', tr ? `peak ${tr.peak_hz} Hz, half power ${tr.half_power_hz.join(' to ')} Hz (low: deep, old data)` : '', f3t ? `half power ${f3t.spectrum.half_power_hz.join(' to ')} Hz (broad)` : ''],
-      ['Amplitudes', 'raw, uncalibrated; 98 % within ±800', 'scaled to −1 … +1'],
+      ['Amplitudes (a.u.)', 'raw, uncalibrated; 98 % of samples within ±800 a.u.', 'scaled to −1 … +1 a.u.'],
       ['Known problems', `1 ${T('spike')} trace, 8 ${T('dead', 'dead')} crosslines on the west edge, alternate inlines missing`, `strong ${T('imbalance', 'class imbalance')}; test 1 has 5× the Scruff of train`],
       ['Good for', 'fault detection without labels, attributes, SEG-Y QC, an interpretation assistant', 'supervised facies segmentation with a real score, look-alike search'],
     ]
@@ -1179,7 +1253,7 @@
         ${panel('Frequency content', chart('c-sp', 300), [`how much of the signal lives at each frequency, averaged over thousands of traces. Frequency is how fast the wiggles go: low frequencies carry the big shapes, high ones the thin layers.`, `the peak is ${m.spectrum.peak_hz} Hz and the shaded band holds half the energy (${m.spectrum.half_power_hz.join(' to ')} Hz). At 3,000 to 4,000 m/s that means a ${T('tuning', 'tuning thickness')} near 70 to 90 m: a layer or fault ${T('throw')} thinner than that blurs. See the <a href="#resolution">Resolution page</a>.`])}
         ${panel('Amplitude distribution', chart('c-amp', 300), [`a histogram: how many samples have each amplitude value (x) as a share of all ${num(g.traces * g.samples / 1e6)} million samples (y).`, `it is symmetric and peaked at zero: most samples are weak, a few are strong. The file header claims −350,841 to 266,022, but only one spike trace reaches that, so clip at about ±${num(pc['99.9'], 0)} (the 99.9th percentile) when you plot or train.`])}
       </div>
-      ${panel('Percentiles', table([['Percentile', (r) => r[0]], ['Amplitude', (r) => num(r[1], 1), 'num']], Object.entries(pc).sort((x, y) => x[0] - y[0])), 'use these for clipping and normalising rather than the header\'s min and max.')}
+      ${panel('Percentiles', table([['Percentile (% of samples below)', (r) => `${r[0]} %`], ['Amplitude (a.u.)', (r) => num(r[1], 1), 'num']], Object.entries(pc).sort((x, y) => x[0] - y[0])), 'use these for clipping and normalising rather than the header\'s min and max.')}
       <div class="section-title">Where it is</div>
       ${panel('Location', '<div id="smap" style="height:320px;border-radius:var(--radius-sm)"></div>', `${esc(g.crs)}. ${esc(g.orientation)}. The grid is square to north, so the text header's latitude and longitude ranges bound it.`)}
       <div class="section-title">Inside the SEG-Y file</div>
@@ -1198,12 +1272,12 @@ cube = cube[:, :-8]                      # the dead west edge
     const ex = explorer($('exp'), 'adele', m, (p) => traceView($('trace'), 'adele', m, p))
     view.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => { const [ax, i, layer] = b.dataset.go.split(':'); ex.go(ax, +i, layer || 'amp') } })
     const R = m.rms_map, xs = R[0].map((_, j) => 5670 + j * m.rms_map_xl_step), ys = R.map((_, i) => 4175 + 2 * i)
-    plot('c-rms', [{ type: 'heatmap', z: R, x: xs, y: ys, colorscale: [[0, css('--bg')], [1, S(1)]], zmin: 0, zmax: 450, colorbar: { thickness: 10, tickfont: { color: css('--muted') } }, hovertemplate: 'inline %{y} · crossline %{x}<br>RMS %{z:.0f}<extra></extra>' }],
-      { xaxis: { autorange: 'reversed', title: { text: 'crossline (west ← → east)' } }, yaxis: { title: { text: 'inline (south → north)' } } })
+    plot('c-rms', [{ type: 'heatmap', z: R, x: xs, y: ys, colorscale: [[0, css('--bg')], [1, S(1)]], zmin: 0, zmax: 450, colorbar: { thickness: 10, tickfont: { color: css('--muted') }, title: { text: 'RMS (a.u.)', side: 'right', font: { size: 11, color: css('--muted') } } }, hovertemplate: 'inline %{y} · crossline %{x}<br>RMS %{z:.0f} a.u.<extra></extra>' }],
+      { xaxis: { autorange: 'reversed', title: { text: 'crossline number (west ← → east)' } }, yaxis: { title: { text: 'inline number (south → north)' } } })
     $('c-rms').on('plotly_click', (e) => ex.go('inline', Math.round((e.points[0].y - 4175) / 2)))
     rmsTimeChart('c-rmst', m.rms_time, g.t0_ms, g.dt_ms)
     spectrumChart('c-sp', m.spectrum)
-    plot('c-amp', [histo(m.amplitude.hist, S(1), true)], { xaxis: { title: { text: 'amplitude' } }, yaxis: { title: { text: '% of samples' } } })
+    plot('c-amp', [histo(m.amplitude.hist, S(1), true)], { xaxis: { title: { text: 'amplitude (a.u.)' } }, yaxis: { title: { text: '% of samples' } } })
     const ll = g.latlon, mp = map($('smap'), [], () => '', () => '', [(ll.south + ll.north) / 2, (ll.west + ll.east) / 2], 7)
     const box = L.rectangle([[ll.south, ll.west], [ll.north, ll.east]], { color: S(2), weight: 2, fillOpacity: 0.15 }).bindPopup('Adele 3D survey outline').addTo(mp)
     mp.fitBounds(box.getBounds().pad(1.5))
@@ -1263,14 +1337,14 @@ section, labels = s[200].T, l[200].T                                         # o
     pairs.sort((x, y) => y.n - x.n)
     $('contacts').innerHTML = table([['Above', (r) => `<span class="dot" style="background:${FAC()[r.a]}"></span> ${esc(m.facies[r.a])}`], ['Directly below', (r) => `<span class="dot" style="background:${FAC()[r.b]}"></span> ${esc(m.facies[r.b])}`],
       ['Traces', (r) => num(r.n), 'num'], ['Share of that unit\'s base', (r) => `${(r.n / r.tot * 100).toFixed(1)} %`, 'num'], ['', (r) => (r.b < r.a ? '<span class="tag amber">upside down</span>' : '')]], pairs, 380)
-    plot('c-amp', [bar(sp.train.amp_by_class.map((x, k) => ({ k: x.k, n: x.rms, c: FAC()[k] })), { h: true, fmt: '' })].map((t) => ({ ...t, marker: { color: FAC() }, hovertemplate: '%{y}: RMS %{x:.3f}<extra></extra>' })),
-      { yaxis: { autorange: 'reversed' }, xaxis: { title: { text: 'RMS amplitude' } }, margin: { l: 130, r: 10, t: 10, b: 44 } })
+    plot('c-amp', [bar(sp.train.amp_by_class.map((x, k) => ({ k: x.k, n: x.rms, c: FAC()[k] })), { h: true, fmt: '' })].map((t) => ({ ...t, marker: { color: FAC() }, hovertemplate: '%{y}: RMS %{x:.3f} (scaled units)<extra></extra>' })),
+      { yaxis: { autorange: 'reversed' }, xaxis: { title: { text: 'RMS amplitude (scaled units, −1…+1)' } }, margin: { l: 130, r: 10, t: 10, b: 44 } })
     if (lk) plot('c-lk', [{ type: 'bar', orientation: 'h', y: m.facies, x: m.facies.map((f) => (lk.per_class[f] ?? 0) * 100), marker: { color: FAC() }, hovertemplate: '%{y}: %{x:.0f} %<extra></extra>' }],
       { yaxis: { autorange: 'reversed' }, xaxis: { title: { text: '% right in the top 10' }, range: [0, 100] }, margin: { l: 130, r: 10, t: 10, b: 44 },
         shapes: [{ type: 'line', x0: lk.chance * 100, x1: lk.chance * 100, yref: 'paper', y0: 0, y1: 1, line: { color: css('--muted'), dash: 'dot', width: 1.5 } }],
         annotations: [{ x: lk.chance * 100, yref: 'paper', y: 1.04, text: 'chance', showarrow: false, font: { color: css('--muted'), size: 11 } }] })
     spectrumChart('c-sp', sp.train.spectrum)
-    rmsTimeChart('c-rmst', sp.train.rms_time, 0, 4, 'time from top of cube (ms)')
+    rmsTimeChart('c-rmst', sp.train.rms_time, 0, 4, 'time from top of cube (ms)', 'scaled units, −1…+1')
   }
 
   // ---------- start here: how to read this data, in plain words, with the numbers of the cube in front of you ----------
@@ -1344,7 +1418,7 @@ section, labels = s[200].T, l[200].T                                         # o
           A boundary between two kinds of rock sends part of the sound back, so each wiggle of the trace marks a boundary. Strictly, a trace here is many recordings of that spot combined (a ${T('stack')}) to cut noise.
           Plot one trace as a line and you have the <b>wiggle</b> you see when you click the section. A section is ${num(c.nx)} traces side by side.`)}
         ${qa('What is a sample, and what is amplitude?', `A ${T('sample')} is one number on a trace: the strength of the echo at one instant (${c.dt} ms step). That strength is the ${T('amplitude')}. Zero means nothing came back (no boundary);
-          red (positive) and blue (negative) are echoes of opposite sign, which tells you whether the sound passed into harder or softer rock. The units are arbitrary: Adele's typical values are about ±${num(pa.amplitude.percentiles['99'], 0)},
+          red (positive) and blue (negative) are echoes of opposite sign, which tells you whether the sound passed into harder or softer rock. The units are arbitrary: Adele's typical values are about ±${num(pa.amplitude.percentiles['99'], 0)} a.u.,
           F3's are scaled to −1…+1. Only the relative size matters.`)}
         ${qa('Is time the same as depth?', `No. The vertical axis is <b>two-way time</b>. To get depth you need the rock speed: depth ≈ speed × time ÷ 2. If the speed is ${num(c.v)} m/s, 1 second of two-way time is ${num(z(1000))} m.
           But speed changes with depth and rock, and this cube has no wells to measure it, so the depth axis in the explorer is an estimate you can change.`)}
@@ -1360,12 +1434,30 @@ section, labels = s[200].T, l[200].T                                         # o
           That decides the smallest layer you can tell apart: a quarter of a wavelength, about ${num((c.v / c.spec.peak_hz) / 4)} m here at ${num(c.v)} m/s.`)}
         ${qa('What are dead traces, spikes and clipping?', `A <b>${T('dead', 'dead trace')}</b> is all zeros: no data at that spot. A <b>${T('spike')}</b> is a burst of absurd values from an error (Adele has one trace reaching −350,841 where normal is within ±1,600). <b>${T('clip', 'Clipping')}</b> means showing every value above a limit in the same full colour, so the picture is not ruled by a few huge numbers.`)}
         </div>
+        <div class="section-title">Every kind of number you will see, and its unit</div>
+        ${panel('Units key', `<div class="wrap">${table([['Quantity', (r) => `<b>${r[0]}</b>`], ['Unit', (r) => r[1]], ['Where you see it', (r) => `<span class="muted">${r[2]}</span>`], ['What it is', (r) => r[3]]], [
+          ['Amplitude', T('au', 'a.u.') + ' (arbitrary units)', 'colour bar, hover, histograms, percentiles', 'echo strength at one sample; no physical unit, only sign and ratios matter'],
+          ['RMS amplitude', 'a.u.', 'loudness map, loudness against time, trace panel', 'average strength of many samples (root mean square)'],
+          ['Two-way time', 'ms (milliseconds)', 'vertical axis, time slider', 'time for sound to go down and back'],
+          ['Approximate depth', 'm (metres), at an assumed velocity', 'depth axis, hover, 3D box', 'velocity × two-way time ÷ 2; an estimate, not measured'],
+          ['Distance', 'm (metres)', 'distance axes, spacing table, Measure', 'ground distance, from the grid spacing'],
+          ['Inline and crossline number', 'line numbers (no unit)', 'axes, slider, hover', 'labels of the grid rows and columns, not distances'],
+          ['Counts', 'traces, samples, inlines', 'KPIs, info strip', 'how many of each there are'],
+          ['Frequency', 'Hz (cycles per second)', 'spectra, calculator', 'how fast the wiggles go'],
+          ['Wavenumber', 'cycles per km', 'spectra along the map directions', 'how fine a pattern is, per kilometre of ground'],
+          ['Discontinuity (1 − coherence)', 'no unit, 0 to 1', 'coherence view, hover', '0 layers continuous, 1 layers broken'],
+          ['Autocorrelation', 'no unit, −1 to 1', 'Resolution page', '1 identical, 0 unrelated, −1 opposite'],
+          ['Rock speed (velocity)', 'm/s', 'depth axis, calculator', 'assumed, there are no wells to measure it'],
+          ['Vertical exaggeration', '× (a ratio)', 'slider, info strip', 'how much taller than true scale the picture is drawn'],
+          ['Slope', '° (degrees)', 'Measure', 'angle from horizontal at true scale'],
+          ['Shares', '% (of samples, traces or energy)', 'charts and tables', 'a part out of the whole'],
+          ['Map position', 'm east (E) and m north (N), UTM zone 51', 'hover on Adele', 'real-world coordinates of the trace']], 900)}</div>`)}
         <div class="section-title">The numbers at a glance</div>
         ${panel('Both cubes side by side', `<div class="wrap">${table([['', (r) => `<b>${r[0]}</b>`], ['Adele (official)', (r) => r[1]], ['F3 (stand-in)', (r) => r[2]]], [
           ['Traces', num(C.adele.traces), num(C.f3.traces)], ['Samples per trace', num(C.adele.ns), num(C.f3.ns)], ['Time between samples', '4 ms', '4 ms'], ['Time window', `${num(C.adele.win)} ms`, `${num(C.f3.win)} ms`],
           ['Distance between traces', '12.5 m along, 37.5 m across', '25 m both ways'], ['Area', `${km(34125)} × ${km(11250)} = 384 km²`, `${km(17500)} × ${km(10000)} (train block)`],
           ['Traces per km²', num(1e6 / (12.5 * 37.5)), num(1e6 / (25 * 25))], ['Numbers in the cube', `${num(C.adele.traces * C.adele.ns / 1e6)} million`, `${num(C.f3.traces * C.f3.ns / 1e6)} million (train)`],
-          ['Size on disk', '3.5 GB (SEG-Y)', '1.2 GB (arrays)'], ['Typical trace loudness (RMS)', num(C.adele.rms, 0), num(C.f3.rms, 2)]], 600)}</div>`,
+          ['Size on disk', '3.5 GB (SEG-Y)', '1.2 GB (arrays)'], ['Typical trace loudness (RMS)', `${num(C.adele.rms, 0)} a.u.`, `${num(C.f3.rms, 2)} a.u. (scaled)`]], 600)}</div>`,
           `rows are the facts you need to plan with: how much detail there is across, how much memory a cube needs, how dense the grid is.`)}
         <div class="callout" style="margin-top:1rem">Next: <a href="#${cur}">open the ${c.name} explorer</a> to slice the cube, or <a href="#resolution">see how fine the detail really is</a>.</div>
         ${terms(['trace', 'sample', 'twt', 'amplitude', 'inline', 'crossline', 'timeslice', 'rms', 'coherence', 'spectrum', 'dead', 'spike', 'clip', 'stack'])}`
@@ -1382,7 +1474,9 @@ section, labels = s[200].T, l[200].T                                         # o
       f3: { name: 'F3', color: S(2), res: rf, sp: pf.splits.train.spectrum, dt: 4, dxA: 25, dxB: 25, dims: [401, 701, 255], v: 2000, t: 500, tmin: 50, tmax: 1000, band: 'peak' },
     }
     let cur = 'adele'
-    const freq = (c) => ({ peak: c.sp.peak_hz, high: c.sp.half_power_hz[1], max: c.sp.minus20_hz[1] })[c.band]
+    // the sound loses its high frequencies with depth: use the measured window that holds the chosen two-way time
+    const win = (c) => c.res.windows.find((w) => c.t >= w.t0 && c.t < w.t1) || (c.t < c.res.windows[0].t0 ? c.res.windows[0] : c.res.windows[c.res.windows.length - 1])
+    const freq = (c) => { const w = win(c); return ({ peak: w.peak_hz, high: w.half_power_hz[1], max: w.minus20_hz[1] })[c.band] }
     const calc = (c) => {
       const f = freq(c), lam = c.v / f, dip = (dx) => { const s = c.v / (4 * f * dx); return s >= 1 ? 90 : (Math.asin(s) * 180) / Math.PI }
       return { f, lam, tune: lam / 4, detect: lam / 20, dz: (c.v * c.dt) / 2000, rF: (c.v / 2) * Math.sqrt(c.t / 1000 / f), lat: lam / 2, dipA: dip(c.dxA), dipB: dip(c.dxB) }
@@ -1408,6 +1502,9 @@ section, labels = s[200].T, l[200].T                                         # o
           ['Correlation falls to 0.5 at', (r) => r[5], 'num'], ['First reaches 0', (r) => r[6], 'num'], ['Verdict', (r) => r[7]]], [row(C.adele, 'crossline'), row(C.adele, 'inline'), row(C.adele, 'time'), row(C.f3, 'crossline'), row(C.f3, 'inline'), row(C.f3, 'time')], 600)}</div>`,
         ['the measured granularity of both cubes. Nyquist ÷ 95 % shows how much finer the sampling is than the signal needs: 4× means you could keep every fourth sample and lose almost nothing.',
           `Adele is sampled far finer than its content needs in all three directions: along an inline by ${num(ra.crossline.nyquist / ra.crossline.k95, 0)}×, between inlines still by ${num(ra.inline.nyquist / ra.inline.k95, 1)}×, in time by ${num(ra.time.nyquist / ra.time.k95, 1)}×. So the missing inlines cost little for smooth reflectors; sharp features such as faults are where they could matter. And Adele could be resampled in time to 8 ms with almost no loss.`])}
+      ${panel('Frequency changes with depth', `<div class="grid g2" style="gap:.8rem">${chart('rw', 300)}<div class="wrap" id="rwt"></div></div>`,
+        ['the spectrum measured in successive time windows. Each bar spans the frequencies holding half the energy in that window, and the dot is the peak.',
+          'the shallow part of Adele holds much higher frequencies than the deep part, so the single average number hides that shallow beds are resolved much better than deep ones. The calculator below uses the window of the two-way time you enter.'])}
       <div class="section-title">2. Calculator: what can you resolve?</div>
       ${panel('Your numbers', `<div class="row" style="gap:.6rem 1.2rem;margin-bottom:.7rem">
           <div class="seg" id="rc"><button data-c="adele" class="on">Adele</button><button data-c="f3">F3</button></div>
@@ -1442,30 +1539,38 @@ section, labels = s[200].T, l[200].T                                         # o
         traces.push({ x: [r.nyquist, r.nyquist], y: [1e-7, 1], type: 'scatter', mode: 'lines', name: `${C[n].name} limit`, line: { color: C[n].color, dash: 'dash', width: 1.5 }, hovertemplate: `${C[n].name}: finest detail the spacing holds (${num(r.nyquist, 1)})<extra></extra>`, showlegend: false },
           { x: [r.k95, r.k95], y: [1e-7, 1], type: 'scatter', mode: 'lines', name: `${C[n].name} 95%`, line: { color: C[n].color, dash: 'dot', width: 1.5 }, hovertemplate: `${C[n].name}: 95 % of the energy is below ${num(r.k95, 1)}<extra></extra>`, showlegend: false })
       }
-      plot(`rs-${a}`, traces, { xaxis: { title: { text: axTitle[a] }, type: 'log' }, yaxis: { title: { text: 'relative power' }, type: 'log', range: [-6, 0.1] },
+      plot(`rs-${a}`, traces, { xaxis: { title: { text: axTitle[a] }, type: 'log' }, yaxis: { title: { text: 'relative power (peak = 1)' }, type: 'log', range: [-6, 0.1] },
         annotations: [{ text: label, xref: 'paper', yref: 'paper', x: 0, y: 1.14, showarrow: false, font: { size: 12 }, xanchor: 'left' }], margin: { l: 56, r: 10, t: 34, b: 44 } })
     }
     const ac = (a, n, dash) => ({ x: C[n].res[a].lag, y: C[n].res[a].r, type: 'scatter', mode: 'lines', name: `${C[n].name} ${a}`, line: { color: a === 'inline' ? S(3) : C[n].color, width: 2, dash }, hovertemplate: `${C[n].name} ${a} lag %{x:.0f}: %{y:.2f}<extra></extra>` })
     const half = { type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0.5, y1: 0.5, line: { color: css('--muted'), dash: 'dot' } }
     plot('ra-lat', [ac('crossline', 'adele', 'solid'), ac('inline', 'adele', 'dash'), ac('crossline', 'f3', 'solid')].map((t, i) => ({ ...t, line: { ...t.line, color: [S(1), S(3), S(2)][i] } })),
-      { xaxis: { title: { text: 'lateral lag (m)' }, range: [0, 800] }, yaxis: { title: { text: 'autocorrelation' } }, shapes: [half], legend: { orientation: 'h', y: 1.16 } })
+      { xaxis: { title: { text: 'lateral lag (m)' }, range: [0, 800] }, yaxis: { title: { text: 'autocorrelation (−1 to 1)' } }, shapes: [half], legend: { orientation: 'h', y: 1.16 } })
     plot('ra-t', [ac('time', 'adele', 'solid'), ac('time', 'f3', 'solid')].map((t, i) => ({ ...t, line: { ...t.line, color: [S(1), S(2)][i] } })),
-      { xaxis: { title: { text: 'time lag (ms)' }, range: [0, 120] }, yaxis: { title: { text: 'autocorrelation' } }, shapes: [half], legend: { orientation: 'h', y: 1.16 } })
+      { xaxis: { title: { text: 'time lag (ms)' }, range: [0, 120] }, yaxis: { title: { text: 'autocorrelation (−1 to 1)' } }, shapes: [half], legend: { orientation: 'h', y: 1.16 } })
 
+    // ---- frequency by depth window
+    plot('rw', ['adele', 'f3'].flatMap((n) => { // one time axis: F3 covers 0 to 1,000 ms and Adele 1,500 to 5,500 ms, so they do not overlap
+      const W = C[n].res.windows, mid = (w) => (w.t0 + w.t1) / 2
+      return [{ x: W.flatMap((w) => [w.half_power_hz[0], w.half_power_hz[1], null]), y: W.flatMap((w) => [mid(w), mid(w), null]), type: 'scatter', mode: 'lines', name: `${C[n].name} half-power band`, line: { color: C[n].color, width: 10 }, opacity: 0.35, hovertemplate: `${C[n].name}: %{x} Hz<extra></extra>` },
+        { x: W.map((w) => w.peak_hz), y: W.map(mid), type: 'scatter', mode: 'markers', name: `${C[n].name} peak`, marker: { color: C[n].color, size: 9 }, hovertemplate: `${C[n].name} peak %{x} Hz<extra></extra>` }]
+    }), { xaxis: { title: { text: 'frequency (Hz)' }, range: [0, 80] }, yaxis: { title: { text: 'two-way time (ms)' }, autorange: 'reversed' }, legend: { orientation: 'h', y: 1.18 } })
+    $('rwt').innerHTML = table([['Window', (r) => r[0]], ['Peak', (r) => r[1], 'num'], ['Half of the energy between', (r) => r[2], 'num'], ['Highest usable (−20 dB)', (r) => r[3], 'num']],
+      ['adele', 'f3'].flatMap((n) => C[n].res.windows.map((w) => [`${C[n].name} ${num(w.t0)}–${num(w.t1)} ms`, `${num(w.peak_hz, 0)} Hz`, `${w.half_power_hz.map((x) => num(x, 0)).join(' to ')} Hz`, `${num(w.minus20_hz[1], 0)} Hz`])), 500)
     // ---- calculator
     const dipText = (d) => (d >= 90 ? 'any dip (not aliased)' : `${num(d, 0)}° and flatter`)
     function results() {
       const c = C[cur], k = calc(c)
       $('rres').innerHTML = `<div class="wrap">${table([['Quantity', (r) => `<b>${r[0]}</b>`], ['Value', (r) => r[1], 'num'], ['How it is worked out', (r) => `<span class="muted">${r[2]}</span>`], ['What it means', (r) => r[3]]], [
-        ['Frequency used', `${num(k.f, 1)} Hz`, 'measured from the cube', 'how fast the wiggles are'],
+        ['Frequency used', `${num(k.f, 1)} Hz`, `measured in the ${num(win(c).t0)} to ${num(win(c).t1)} ms window of this cube`, 'how fast the wiggles are; it changes with depth, see the chart above'],
         ['Wavelength', `${num(k.lam)} m`, 'speed ÷ frequency', 'the length of one wiggle in the rock'],
         ['Thinnest layer you can separate', `${num(k.tune)} m`, 'wavelength ÷ 4 (tuning thickness)', 'thinner layers blur into one event'],
         ['Thinnest layer you can detect', `${num(k.detect)} m`, 'wavelength ÷ 20 (rule of thumb)', 'seen as a brighter or dimmer event, thickness unknown'],
         ['Rock per sample (vertical)', `${num(k.dz, 1)} m`, 'speed × time step ÷ 2', 'the vertical grid; compare with the thinnest separable layer'],
-        ['Samples across one wavelength', `${num(k.lam / k.dz, 0)}`, 'wavelength ÷ rock per sample', 'many means smooth, oversampled in time'],
+        ['Samples across one wavelength', `${num(k.lam / k.dz, 0)} samples`, 'wavelength ÷ rock per sample', 'many means smooth, oversampled in time'],
         ['Sideways blur before migration (Fresnel zone)', `${num(k.rF)} m radius`, `(speed ÷ 2) × √(time ÷ frequency), at ${num(c.t)} ms`, 'smaller features smear into this patch; migration removes most of it'],
         ['Best sideways resolution after migration', `${num(k.lat)} m`, 'wavelength ÷ 2 (rule of thumb)', 'about the smallest lateral detail that is real'],
-        ['Traces per resolution cell, along / across', `${num(k.lat / c.dxA, 1)} / ${num(k.lat / c.dxB, 1)}`, 'that distance ÷ trace spacing', 'more than 2 means the grid is not the limit'],
+        ['Traces per resolution cell, along / across', `${num(k.lat / c.dxA, 1)} / ${num(k.lat / c.dxB, 1)} traces`, 'that distance ÷ trace spacing', 'more than 2 means the grid is not the limit'],
         ['Steepest dip kept unaliased, along / across', `${dipText(k.dipA)} / ${dipText(k.dipB)}`, 'sin(angle) = speed ÷ (4 × frequency × spacing)', 'steeper layers jump between traces and look flatter']], 700)}</div>`
       const xs = Array.from({ length: 90 }, (_, i) => 3 + i * 0.7)
       plot('rch', [
@@ -1508,11 +1613,11 @@ section, labels = s[200].T, l[200].T                                         # o
       }
       const A = col(C.adele), F = col(C.f3), tag = (v) => `<span class="tag ${v[1]}">${v[0]}</span>`
       $('rchk').innerHTML = `<div class="wrap">${table([['', (r) => `<b>${r[0]}</b>`], ['Adele', (r) => r[1]], ['F3', (r) => r[2]]], [
-        ['Samples through it (vertical)', `${num(T_ / A.k.dz, 1)}`, `${num(T_ / F.k.dz, 1)}`],
+        ['Samples through it (vertical)', `${num(T_ / A.k.dz, 1)} samples`, `${num(T_ / F.k.dz, 1)} samples`],
         ['Thickness against the separable limit', `${num(A.r, 2)}× (limit ${num(A.k.tune)} m)`, `${num(F.r, 2)}× (limit ${num(F.k.tune)} m)`],
         ['Vertical verdict', tag(A.vt), tag(F.vt)],
-        ['Traces across it, along an inline', `${num(A.a[0], 1)} ${tag(A.a[1])}`, `${num(F.a[0], 1)} ${tag(F.a[1])}`],
-        ['Traces across it, between inlines', `${num(A.b[0], 1)} ${tag(A.b[1])}`, `${num(F.b[0], 1)} ${tag(F.b[1])}`],
+        ['Traces across it, along an inline', `${num(A.a[0], 1)} traces ${tag(A.a[1])}`, `${num(F.a[0], 1)} traces ${tag(F.a[1])}`],
+        ['Traces across it, between inlines', `${num(A.b[0], 1)} lines ${tag(A.b[1])}`, `${num(F.b[0], 1)} lines ${tag(F.b[1])}`],
         ['Narrower than half a wavelength?', W_ < A.k.lat ? `yes (${num(A.k.lat)} m): blurred sideways` : 'no', W_ < F.k.lat ? `yes (${num(F.k.lat)} m): blurred sideways` : 'no']], 400)}</div>`
     }
     // ---- planner

@@ -1,0 +1,32 @@
+[project]
+name = "subsurface-evidence"
+version = "0.1.0"
+description = "Turns subsurface evidence (logs, text, tops, space) into a probability with its reasons."
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.120", "uvicorn[standard]>=0.38", "httpx>=0.28",
+    "numpy>=2.3", "scipy>=1.16", "pandas>=2.3", "pyarrow>=21", "duckdb>=1.4",
+    "scikit-learn>=1.7", "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+gpu = ["torch>=2.7"]  # CUDA 12.8 wheels: uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+# the GPU worker env: `uv sync --extra gpu` takes torch from the CUDA 12.8 index (the 5060 Ti is Blackwell, sm_120)
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", extra = "gpu" }]

@@ -48,11 +48,11 @@ TRACEH = [("Trace in line", 1, 4, "position along this inline (1 to 2,731)"),
           ("Field record", 9, 4, "here a copy of the inline number"), ("Trace in record", 13, 4, "position along the inline"),
           ("CDP", 21, 4, "here a copy of the crossline number"), ("Trace in CDP", 25, 4, ""),
           ("Trace id", 29, 2, "1 = live seismic"), ("Data use", 35, 2, "1 = production"),
-          ("Elevation scalar", 69, 2, ""), ("Coordinate scalar", 71, 2, "-100: divide coordinates by 100"),
-          ("Source X", 73, 4, "a copy of the bin X"), ("Source Y", 77, 4, "a copy of the bin Y"),
+          ("Elevation scalar", 69, 2, ""), ("Coordinate scalar", 71, 2, "-100: divide coordinates by 100 to get metres"),
+          ("Source X", 73, 4, "a copy of the bin X (metres × 100)"), ("Source Y", 77, 4, "a copy of the bin Y (metres × 100)"),
           ("Coordinate units", 89, 2, "1 = length (metres)"), ("Lag time A (ms)", 105, 2, ""),
-          ("Delay time (ms)", 109, 2, "time of the first sample"), ("Samples", 115, 2, ""),
-          ("Sample interval (µs)", 117, 2, ""), ("CDP X", 181, 4, "bin centre X, scaled"), ("CDP Y", 185, 4, "bin centre Y, scaled"),
+          ("Delay time (ms)", 109, 2, "two-way time of the first sample, in ms"), ("Samples", 115, 2, ""),
+          ("Sample interval (µs)", 117, 2, ""), ("CDP X", 181, 4, "bin centre X in metres × 100 (÷ 100 gives UTM metres)"), ("CDP Y", 185, 4, "bin centre Y in metres × 100 (÷ 100 gives UTM metres)"),
           ("Inline", 189, 4, "inline number"), ("Crossline", 193, 4, "crossline number")]
 
 
@@ -237,15 +237,27 @@ def axis_stats(v: np.ndarray, axis: int, d: float, per_km: bool) -> dict:
             "half_lag": cross(0.5), "zero_lag": cross(0.0), "peak_k": round(float(k[1:][np.argmax(power[1:])]), 2)}
 
 
+def freq_windows(get, n: int, dt_ms: float, t0_ms: float, size_ms: float) -> list:
+    """The spectrum in successive time windows: the sound loses its high frequencies with depth, so resolution is not one number."""
+    out, k = [], int(round(size_ms / dt_ms))
+    for i0 in range(0, n - k + 1, k):
+        a = get(i0, i0 + k)
+        live = a[np.abs(a).max(1) > 0]
+        fr, sp = spectrum(live, dt_ms / 1000)
+        out.append({"t0": t0_ms + i0 * dt_ms, "t1": t0_ms + (i0 + k) * dt_ms, **bands(fr, sp)})
+    return out
+
+
 def build_resolution() -> None:
     """Granularity measured on each cube: spectra and autocorrelations along the three axes of a representative
     block (Adele: 100 inlines x 800 crosslines x 600 samples from the middle; F3: the whole training block)."""
     out = {}
     a = np.asarray(_adele("ilxt")[100:200, 1000:1800, 200:800], dtype=np.float32)
-    out["adele"] = {"block": list(a.shape), "block_note": "inlines 4375 to 4573, crosslines 6670 to 7469, 2,300 to 4,696 ms",
+    ad = _adele("ilxt")
+    out["adele"] = {"windows": freq_windows(lambda i0, i1: np.asarray(ad[::10, 200:2500:10, i0:i1], dtype=np.float32).reshape(-1, i1 - i0), NS, DT, T0, 1000), "block": list(a.shape), "block_note": "inlines 4375 to 4573, crosslines 6670 to 7469, 2,300 to 4,696 ms",
                     "crossline": axis_stats(a, 1, 12.5, True), "inline": axis_stats(a, 0, 37.5, True), "time": axis_stats(a, 2, DT, False)}
     f = np.asarray(_f3("train", "seismic"), dtype=np.float32)
-    out["f3"] = {"block": list(f.shape), "block_note": "the whole training block",
+    out["f3"] = {"windows": freq_windows(lambda i0, i1: f[::4, ::4, i0:i1].reshape(-1, i1 - i0), 252, 4.0, 0.0, 252), "block": list(f.shape), "block_note": "the whole training block",
                  "crossline": axis_stats(f, 1, 25.0, True), "inline": axis_stats(f, 0, 25.0, True), "time": axis_stats(f, 2, 4.0, False)}
     for c, d in out.items():
         save_json(OUT / f"resolution_{c}.json", {"built": time.strftime("%Y-%m-%d %H:%M"), **d})

@@ -245,3 +245,23 @@ What follows from it:
 - A 128 x 128 x 128 patch of Adele covers 1.6 km x 4.8 km x 512 ms: the voxels are 12.5 x 37.5 m wide and about 7 m
   tall, so resample before training (interpolate inlines 3x, thin time to 8 ms: 901 x 2,731 x 501 voxels, 4.9 GB as
   float32).
+
+## 8. What stands out in Adele (measured, 19 November 2026)
+
+From coherence on every 40th time slice, the spectrum in 1-second windows, and loudness by third of the survey.
+
+- **Resolution is not one number: it changes a lot with depth.** Half of the energy lies at 8 to 45 Hz between 1.5 and
+  2.5 s, 8 to 23 Hz at 2.5 to 3.5 s, and only 9 to 18 Hz at 3.5 to 4.5 s (usable up to 75, 51 and 34 Hz). The shallow
+  section resolves much thinner layers than the deep one. The average peak of 11 Hz is set by the deep, strong part.
+- **A strong amplitude package at 3.5 to 4.5 s that fades to the east.** RMS is 496 in the western third, 387 in the
+  middle and 247 in the eastern third; at 4.5 to 5.5 s it is 263, 197 and 159. Shallower than 3.5 s the three thirds
+  agree within about 15 %. A lateral amplitude change like this can mean a change of rock, of fluid, or of processing;
+  the cube cannot say which, but it is the most obvious thing to investigate.
+- **Faults are sparse.** Only 0.5 to 1 % of any time slice is strongly discontinuous (above 0.6), except at the top
+  and bottom edge of the window (3 to 4 %, an edge effect of the filter).
+- **The "most broken" interval is a weak-signal interval.** Mean discontinuity peaks at 2.1 to 2.3 s (0.20, strongest in
+  the west and middle), exactly where the loudness is lowest (RMS about 125). Weak data is noisy, so low coherence
+  there is at least partly noise, not faults. Check on the section before believing it.
+- **The upper section is nearly flat.** The mean reflector dip in a 2.5 to 3.7 s block (inlines 4375 to 4573,
+  crosslines 6670 to 7469) is about 3 degrees, so the folding and dipping seen below 3.5 s is a different structural
+  style from what lies above it.

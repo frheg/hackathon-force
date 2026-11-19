@@ -1,0 +1,151 @@
+# DRAFT, NOT APPLIED (infra change: needs the owner's go-ahead; copy to homelab apps/subsurface-evidence/ when approved).
+# Three Deployments from one disk-mounted repo, like apps/hackathon: backend (CPU API), ui (static + /api proxy), worker (GPU jobs).
+# Decisions: LOG L003 (modules), L004 (CPU API + on-demand GPU worker, disk-mounted runtime).
+# Open before apply: (1) worker needs an image with torch cu128 (the hackathon runtime image has none), (2) a gpuproxy Deployment
+# labelled gpu.kratos/proxy=subsurface-evidence and the consumer registered in gpuctl, (3) a NetworkPolicy allowing backend -> worker,
+# (4) profctl label + panel tile, (5) the repo path is mounted read-only; the pods write only to /srv/subsurface-evidence.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: subsurface-evidence
+  labels: { profile.kratos/subsurface-evidence: "true" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend, namespace: subsurface-evidence }
+spec:
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata: { labels: { app: backend } }
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 100 }
+      containers:
+        - name: backend
+          image: kratos:5000/hackathon@sha256:fac98c953999202fc80247fe9297ae7479d3678387d1ecd967e07b9e8458ef88 # runtime with uv, 0.1.1
+          command: ["/bin/sh", "-c", "ROLE=backend /home/v1s/Documents/hackathon-force/subsurface-evidence/run.sh"]
+          env:
+            - { name: PORT, value: "8460" }
+            - { name: DATA_DIR, value: /home/v1s/Documents/hackathon-force/data }
+            - { name: WORKER_URL, value: "http://worker:8462" } # via gpuproxy once it exists; unset = compute on CPU here
+            - { name: HOME, value: /srv/subsurface-evidence/.home }
+            - { name: UV_CACHE_DIR, value: /srv/subsurface-evidence/.cache/uv }
+            - { name: UV_PROJECT_ENVIRONMENT, value: /srv/subsurface-evidence/.venv-backend }
+            - { name: UV_PYTHON_DOWNLOADS, value: never }
+          ports: [{ containerPort: 8460 }]
+          readinessProbe: { httpGet: { path: /api/health, port: 8460 }, periodSeconds: 5 }
+          resources: { requests: { cpu: 200m, memory: 512Mi }, limits: { memory: 3Gi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: repo, mountPath: /home/v1s/Documents/hackathon-force }
+            - { name: cache, mountPath: /srv/subsurface-evidence }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: repo, hostPath: { path: /home/v1s/Documents/hackathon-force, type: Directory } }
+        - { name: cache, hostPath: { path: /srv/subsurface-evidence, type: DirectoryOrCreate } }
+        - { name: tmp, emptyDir: { sizeLimit: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ui, namespace: subsurface-evidence }
+spec:
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: ui } }
+  template:
+    metadata: { labels: { app: ui } }
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 100 }
+      containers:
+        - name: ui
+          image: kratos:5000/hackathon@sha256:fac98c953999202fc80247fe9297ae7479d3678387d1ecd967e07b9e8458ef88
+          command: ["/bin/sh", "-c", "ROLE=ui /home/v1s/Documents/hackathon-force/subsurface-evidence/run.sh"]
+          env:
+            - { name: PORT, value: "8461" }
+            - { name: BACKEND_URL, value: "http://backend:8460" }
+            - { name: HOME, value: /srv/subsurface-evidence/.home }
+            - { name: UV_CACHE_DIR, value: /srv/subsurface-evidence/.cache/uv }
+            - { name: UV_PROJECT_ENVIRONMENT, value: /srv/subsurface-evidence/.venv-backend }
+            - { name: UV_PYTHON_DOWNLOADS, value: never }
+          ports: [{ containerPort: 8461 }]
+          readinessProbe: { tcpSocket: { port: 8461 }, periodSeconds: 5 }
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: repo, mountPath: /home/v1s/Documents/hackathon-force, readOnly: true }
+            - { name: cache, mountPath: /srv/subsurface-evidence }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: repo, hostPath: { path: /home/v1s/Documents/hackathon-force, type: Directory } }
+        - { name: cache, hostPath: { path: /srv/subsurface-evidence, type: DirectoryOrCreate } }
+        - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: subsurface-evidence
+  labels: { gpu.kratos/consumer: subsurface-evidence } # no replicas: gpuctl/gpuproxy start it on demand (cold start tolerated)
+spec:
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: worker } }
+  template:
+    metadata: { labels: { app: worker, gpu.kratos/consumer: subsurface-evidence } }
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 100 }
+      containers:
+        - name: worker
+          image: TODO-gpu-runtime-with-torch-cu128 # not built yet
+          command: ["/bin/sh", "-c", "ROLE=worker /home/v1s/Documents/hackathon-force/subsurface-evidence/run.sh"]
+          env:
+            - { name: PORT, value: "8462" }
+            - { name: DATA_DIR, value: /home/v1s/Documents/hackathon-force/data }
+          ports: [{ containerPort: 8462 }]
+          resources: { requests: { cpu: 200m, memory: 1Gi }, limits: { memory: 4Gi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: repo, mountPath: /home/v1s/Documents/hackathon-force, readOnly: true }
+            - { name: cache, mountPath: /srv/subsurface-evidence }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: repo, hostPath: { path: /home/v1s/Documents/hackathon-force, type: Directory } }
+        - { name: cache, hostPath: { path: /srv/subsurface-evidence, type: DirectoryOrCreate } }
+        - { name: tmp, emptyDir: { sizeLimit: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: ui, namespace: subsurface-evidence }
+spec: { selector: { app: ui }, ports: [{ port: 80, targetPort: 8461 }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: backend, namespace: subsurface-evidence }
+spec: { selector: { app: backend }, ports: [{ port: 8460, targetPort: 8460 }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: worker, namespace: subsurface-evidence }
+spec: { selector: { app: worker }, ports: [{ port: 8462, targetPort: 8462 }] }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default, namespace: subsurface-evidence }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }] # Traefik -> ui
+      ports: [{ port: 8461 }]
+    - from: [{ podSelector: { matchLabels: { app: ui } } }]
+      ports: [{ port: 8460 }]
+    - from: [{ podSelector: { matchLabels: { app: backend } } }]
+      ports: [{ port: 8462 }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - to: [{ podSelector: {} }] # between the three pods

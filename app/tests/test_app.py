@@ -263,7 +263,7 @@ def test_atlas_seismic_slices():
 def test_atlas_resolution_is_measured():
     for cube, inline_m in (("adele", 37.5), ("f3", 25.0)):
         r = client.get(f"/atlas/api/seis/resolution/{cube}").json()
-        assert r["inline"]["d"] == inline_m
+        assert r["inline"]["d"] == inline_m and len(r["windows"]) == 4
         for ax in ("crossline", "inline", "time"):
             assert r[ax]["nyquist"] > r[ax]["k95"] > 0  # both cubes are sampled finer than their content needs
 
@@ -286,3 +286,30 @@ def test_atlas_volume_is_a_coarse_copy():
     assert (ni, nx, nt) == (51, 69, 83) and len(r.content) == ni * nx * nt and r.headers["x-steps"] == "6,40,12"
     f = client.get("/atlas/api/seis/volume/f3", params={"split": "test2"})
     assert f.headers["x-shape"].split(",")[1] == "15"
+
+
+def test_greenclay_extracts_depth_and_confidence():
+    from sketches.greenclay import extract_page
+
+    def one(text):
+        got, _ = extract_page(text)
+        return got[0]
+
+    r = one("| 2630 | Claystone | 100 | dark olive grey, glauconitic |")  # a cuttings row: depth in the first cell
+    assert (r["kind"], r["depth_from"], r["depth_to"], r["confidence"]) == ("glauconite", 2630.0, None, "high")
+    r = one("From 2300 to 2350 m: sandstone with green clay laminae")
+    assert (r["kind"], r["depth_from"], r["depth_to"], r["depth_unit"], r["confidence"]) == ("green clay", 2300.0, 2350.0, "m", "high")
+    r = one("Siltstone, grading to sandy siltstone with 10-20% sand; glauconitic")  # 10-20 % is not a depth
+    assert r["depth_from"] is None and r["confidence"] == "low"
+    r = one("| 25 | 2382.6 | SILTSTONE, firm, glauconite blebs |")  # a sample number, then the depth
+    assert (r["depth_from"], r["depth_to"]) == (2382.6, None)
+    r = one("| TOP GREEN CLAY | 875.0 | 897.0 | +/- 25 | 870.0 |")  # a tops table: the top, not a 875-897 interval
+    assert r["marker"] and (r["depth_from"], r["depth_to"]) == (875.0, None)
+    assert one("Chlorite is listed in the 1995-2001 bibliography")["depth_from"] is None  # years are not depths
+
+
+def test_greenclay_each_sentence_gets_its_own_interval():
+    from sketches.greenclay import extract_page
+
+    got, _ = extract_page("Balder Formation (2394 - 2459 m MD): bluish grey tuff. Sele Formation (2459 - 2527 m MD): olive green claystone, glauconitic.")
+    assert {(g["depth_from"], g["depth_to"], g["formation"]) for g in got} == {(2459.0, 2527.0, "Sele Formation")}

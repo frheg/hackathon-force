@@ -29,3 +29,8 @@ dist/
 
 # direnv cache (flake shell)
 .direnv/
+
+# credentials for the Volve data (Databricks Delta Sharing): never commit
+.share
+*.share
+.databricks

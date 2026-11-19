@@ -62,7 +62,8 @@
   .ax line { stroke: var(--line-2); stroke-width: 1; }
   .cbar { display: flex; align-items: center; gap: 0.5rem; font-size: 0.74rem; color: var(--muted); }
   .cbar i { display: inline-block; width: 190px; height: 10px; border-radius: 2px; border: 1px solid var(--line-2); }
-  .xsplit { display: grid; grid-template-columns: minmax(0, 1fr) clamp(410px, 30vw, 700px); gap: 1rem; align-items: start; }
+  .xsplit { --x3w: clamp(460px, 38vw, 900px); display: grid; grid-template-columns: minmax(0, 1fr) var(--x3w); gap: 1rem; align-items: start; }
+  .xsplit.large { --x3w: 48vw; }
   .xsplit.closed { grid-template-columns: minmax(0, 1fr) 54px; }
   .x3d { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); padding: 0.5rem 0.6rem; position: sticky; top: 1rem; }
   .x3h { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; flex-wrap: wrap; font-size: 0.8rem; }
