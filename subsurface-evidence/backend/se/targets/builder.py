@@ -73,7 +73,7 @@ def build(spec: dict) -> pd.DataFrame:
         t["wellbore"] = t[WELL_TABLES[spec["table"]]].map(norm)
         ok = apply(t, spec["success"])
         g = spec.get("group") or "wlbMainArea"
-        u = pd.DataFrame({"wellbore": t.wellbore, "name": t[g].astype(str).where(t[g].notna(), "UNKNOWN"), "coverage": 1, "n_green": ok.astype(int)}).merge(w[["wellbore", "lat", "lon", "td"]], on="wellbore")
+        u = pd.DataFrame({"wellbore": t.wellbore, "name": t[g].astype(str).where(t[g].notna(), "UNKNOWN"), "coverage": 1, "n_green": ok.astype(int)}).merge(w[["wellbore", "lat", "lon", "td", "kb", "wd"]], on="wellbore")
         u = u[u.lat.notna()].drop_duplicates("wellbore")
         u["level"], u["top"], u["bot"] = "WELL", 0.0, u.td.fillna(0.0)
     else:

@@ -16,7 +16,7 @@ from se.api import explore, scene, targets_api
 from se.jobs import map_job
 
 app = FastAPI(title="subsurface-evidence", root_path=os.environ.get("ROOT_PATH", ""), docs_url="/api/docs", openapi_url="/api/openapi.json")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST", "DELETE"])
 app.include_router(explore.router)
 app.include_router(targets_api.router)
 S: dict = {}

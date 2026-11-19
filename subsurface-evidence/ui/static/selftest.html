@@ -1,0 +1,42 @@
+<!-- Browser self-test: serve the UI, open /selftest.html in headless Chromium (--dump-dom, long --virtual-time-budget), read PASS/FAIL lines. Builds one real target (about 35 s). -->
+<!doctype html><meta charset="utf-8"><body><pre id="out">running</pre><iframe id="f" style="width:1400px;height:900px" src="index.html#data"></iframe>
+<script>
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms)), R = [], ok = (n, v, d = "") => R.push(`${v ? "PASS" : "FAIL"} ${n} ${d}`);
+const F = () => document.getElementById("f").contentWindow, D = () => F().document, $ = (s) => D().querySelector(s);
+const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.now() - t < ms) { try { const v = fn(); if (v) return v; } catch {} await sleep(300); } return null; };
+(async () => {
+  try {
+    // --- Data explorer
+    await waitFor(() => $("#tb")); ok("data page loads, table list", $("#tb").options.length > 20, $("#tb").options.length + " options");
+    $("#tb").value = "wellbore_exploration"; $("#tb").dispatchEvent(new Event("change", { bubbles: true }));
+    ok("chart renders after picking a table", !!(await waitFor(() => $("#ch .main-svg") && $("#ch").data?.length)));
+    const gd = $("#ch"); gd.emit("plotly_click", { points: [{ x: gd.data[0].x[0] }] });
+    ok("bar click adds a filter chip", !!(await waitFor(() => $("#ex").textContent.includes("filters:"))), ($("#ex .row + .row") || {}).textContent);
+    D().querySelector('[data-tab="rows"]').click();
+    ok("rows tab shows filtered rows", !!(await waitFor(() => /rows match/.test($("#pane").textContent))), ($("#pane").textContent.match(/[\d,]+ rows match/) || [""])[0]);
+    D().querySelector("[data-rm]").click(); ok("removing the filter clears the chip", !!(await waitFor(() => !$("#ex").textContent.includes("filters:"))));
+    D().querySelector('[data-tab="map"]').click();
+    ok("map tab draws points", !!(await waitFor(() => D().querySelectorAll("#map .leaflet-interactive").length > 50)), D().querySelectorAll("#map .leaflet-interactive").length + " markers");
+    // --- Target builder
+    F().location.hash = "targets"; await waitFor(() => $("[data-pr]"));
+    ok("targets page lists saved targets", D().querySelectorAll("#tt tr").length >= 4, D().querySelectorAll("#tt tr").length - 1 + " rows");
+    $('[data-pr="0"]').click(); await sleep(500);
+    ok("preset fills the form", $("#bt").value.includes("wildcat") && D().querySelectorAll('[data-k="success"][data-p="c"]').length === 1, $("#bt").value);
+    D().querySelector('[data-add="population"]').click(); await sleep(300); ok("add condition adds a row", D().querySelectorAll('[data-k="population"][data-p="c"]').length === 2);
+    D().querySelector('[data-del="population|1"]').click(); await sleep(300); ok("remove condition removes it", D().querySelectorAll('[data-k="population"][data-p="c"]').length === 1);
+    D().querySelector('input[name="md"][value="interval"]').click(); D().querySelector('input[name="md"][value="interval"]').dispatchEvent(new Event("change", { bubbles: true })); await sleep(500);
+    ok("switching to interval changes the tables", [...$("#bt2").options].some((o) => o.value === "wellbore_dst"), [...$("#bt2").options].map((o) => o.value).join());
+    $('[data-pr="0"]').click(); await sleep(400);
+    $("#go").click(); ok("build finishes and shows the result", !!(await waitFor(() => /done in/.test($("#gs").textContent) && $("#res").textContent.includes("Result"), 150000)), $("#gs").textContent);
+    ok("result has gains", /Formation/.test($("#res").textContent), $("#res").textContent.replace(/\s+/g, " ").slice(0, 160));
+    // --- use target, then the pages that depend on it
+    $("#useit").click(); await waitFor(() => F().location.hash === "#validation"); ok("'open this target' goes to validation", !!(await waitFor(() => $("#v1 .main-svg"), 30000)));
+    F().location.hash = "units"; ok("units page works on the new target", !!(await waitFor(() => D().querySelectorAll("#t tr.click").length > 10, 30000)), D().querySelectorAll("#t tr.click").length + " rows");
+    D().querySelector("#t tr.click").click(); ok("unit page explains the estimate", !!(await waitFor(() => $("#wf .main-svg"), 30000)), ($("table td:nth-child(3)") || {}).textContent);
+    F().location.hash = "map"; ok("map page works on the new target", !!(await waitFor(() => D().querySelectorAll("#map .leaflet-interactive").length > 20, 40000)));
+    F().location.hash = "scene"; ok("3D page works on the new target", !!(await waitFor(() => $("#p3 .main-svg, #p3 canvas") && $("#hs").textContent.length > 5, 60000)));
+    F().localStorage.setItem("target", "green_clay");
+  } catch (e) { R.push("ERROR " + e); }
+  document.getElementById("out").textContent = R.join("\n") + "\nDONE";
+})();
+</script>

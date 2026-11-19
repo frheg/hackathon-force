@@ -11,7 +11,22 @@ from se.config import OUT
 from se.targets.builder import build, spec_id
 from se.validate import cv
 
-ROOT = Path(os.environ.get("SE_TARGETS", OUT / "targets"))  # the pod mounts the repo read-only: it points this at a writable directory
+
+
+def _writable() -> Path:
+    """First writable of: $SE_TARGETS, the repo data dir, $HOME/se-targets. The pod mounts the repo read-only, so there it falls to the persistent cache."""
+    for d in ([Path(os.environ["SE_TARGETS"])] if os.environ.get("SE_TARGETS") else []) + [OUT / "targets", Path(os.environ.get("HOME", "/tmp")) / "se-targets"]:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            if os.access(d, os.W_OK):
+                return d
+        except OSError:
+            continue
+    raise OSError("no writable directory for saved targets")
+
+
+ROOT = _writable()  # new targets go here
+ROOTS = list(dict.fromkeys([ROOT, OUT / "targets"]))  # saved ones are read from here and the repo's
 GREEN = {"id": "green_clay", "title": "Green clay in described clay rows", "mode": "interval", "builtin": True,
          "words": {"rows": "described clay rows", "hit": "name a green mineral", "short": "green", "unit": "well x formation interval"}}
 
@@ -28,7 +43,8 @@ PRESETS = [
 
 
 def path(tid: str):
-    return ROOT / tid
+    """Where a target lives: the writable root first, then the read-only repo copy."""
+    return next((r / tid for r in ROOTS if (r / tid / "spec.json").exists()), ROOT / tid)
 
 
 def words(spec: dict) -> dict:
@@ -38,7 +54,7 @@ def words(spec: dict) -> dict:
 def evaluate(spec: dict) -> dict:
     """Build the unit table, validate it, save everything. Returns the saved spec with a summary."""
     spec = {**spec, "id": spec_id(spec)}
-    d = path(spec["id"])
+    d = ROOT / spec["id"]  # always the writable copy
     d.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     u = build(spec)
@@ -57,10 +73,20 @@ def evaluate(spec: dict) -> dict:
 
 
 def saved() -> list:
-    return [json.loads(p.read_text()) for p in sorted(ROOT.glob("*/spec.json"))] if ROOT.exists() else []
+    seen = {}
+    for r in ROOTS:  # the writable copy wins over the repo copy of the same id
+        for p in sorted(r.glob("*/spec.json")) if r.exists() else []:
+            seen.setdefault(p.parent.name, json.loads(p.read_text()))
+    return sorted(seen.values(), key=lambda t: t.get("built", ""))
 
 
 def remove(tid: str):
     if tid == "green_clay":
         raise ValueError("the built-in target cannot be removed")
-    shutil.rmtree(path(tid), ignore_errors=True)
+    for r in ROOTS:
+        try:
+            shutil.rmtree(r / tid)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise ValueError(f"cannot delete {tid}: {r} is read-only here")

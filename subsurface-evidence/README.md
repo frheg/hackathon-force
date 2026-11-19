@@ -9,3 +9,4 @@ Evidence engine: layers of data -> log-odds -> a calibrated, explained estimate.
 - **Add a data type:** write a Layer (`se/evidence/base.py`), register it in `se/evidence/__init__.py`.
 - **Add a rule:** `backend/se/knowledge/rules/*.yaml` (source + status mandatory).
 - **Deploy:** `deploy/subsurface-evidence.yaml` is a DRAFT, not applied.
+- **Browser test:** with the UI and backend running, `chromium --headless --dump-dom --virtual-time-budget=400000 http://127.0.0.1:8461/selftest.html` prints PASS/FAIL per flow (explorer, target builder, pages on a new target).

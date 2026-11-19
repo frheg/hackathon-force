@@ -197,3 +197,14 @@ Status tags: `[done]` `[open]` `[wrong]` (kept, never deleted: a wrong turn is d
 - **What the GPU is good for here** Cells x units distance matrices: maps and the 3D estimate surfaces. About 10x on the CPU at fine resolution (L025). Everything else is small: validation is scikit-learn fits and resampling of a few thousand rows, hotspot scans touch a few hundred units.
 - **Done** The 3D surfaces now go to the GPU worker when one is configured (the proxy wakes it), CPU fallback otherwise; the header shows where the last heavy job ran. Fine maps already did.
 - **Not claimed** Making idle components use the GPU would not make anything faster. Real GPU load comes with phase 3 (a local LLM reading the 112 GB of reports) and phase 4 (seismic attributes), both GPU-bound. One LLM at a time on the GPU applies.
+
+## L032 Browser self-test found three bugs [done]
+- **Run** `ui/static/selftest.html` drives the real UI in headless Chromium: Data explorer (pick table, chart, bar click filter, rows, map, remove filter), Target builder (preset, add/remove condition, mode switch, build, open), then validation, units, unit, map and 3D on the new target. 18 checks, all PASS after the fixes.
+- **Bug 1** The UI proxy (`ui/serve.py`) forwarded no request body and allowed no DELETE: building or deleting a target could never work through the UI (the API tests did not catch it: they call the backend directly). Fixed.
+- **Bug 2** The build error showed `[object Object]` (validation errors are a list). Now readable.
+- **Bug 3** Well-level targets had no rig-floor / water-depth columns, so the 3D page returned 500 for them. Builder now keeps them; the scene tolerates older saved targets (empty, never guessed). Test added.
+- **Lesson** Test through the UI proxy, not only the backend; API tests passed while the UI path was broken.
+
+## L033 Saved targets in the pod [done]
+- **Problem** The pod mounts the repo read-only, so a build could not save. Fix in code: the store writes to the first writable of `$SE_TARGETS`, the repo data dir, `$HOME/se-targets`, and reads from both that and the repo copy (test added). The homelab manifest also sets `SE_TARGETS=/srv/hackathon/se/targets` (pushed and applied by Flux, 2026-11-19).
+- **Verified in the pod** Build through the UI proxy: 1,436 units in 38 s, written to `/srv/hackathon/se/targets`; delete through the proxy works; backend, UI, worker and gpuproxy Running.

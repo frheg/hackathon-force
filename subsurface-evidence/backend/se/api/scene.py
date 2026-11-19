@@ -19,9 +19,14 @@ def xy(lat, lon):
     return np.c_[(np.asarray(lon) - LON0) * 111.32 * np.cos(np.radians(LAT0)), (np.asarray(lat) - LAT0) * KM_LAT]
 
 
+def with_depth_ref(u: pd.DataFrame) -> pd.DataFrame:
+    """Targets saved before the depth switch have no rig-floor / water-depth columns: they stay empty (the UI then assumes kb 25 m, wd 0), never guessed here."""
+    return u.assign(**{c: np.nan for c in ("kb", "wd") if c not in u.columns})
+
+
 def wells(u: pd.DataFrame, limit: int = 4000) -> list:
     """One segment per unit. `bin`: -1 too few rows, else 0..4 by observed share (so the UI can colour in few traces)."""
-    u = u.head(limit)
+    u = with_depth_ref(u).head(limit)
     p = xy(u.lat, u.lon)
     obs = (u.n_green / u.coverage.where(u.coverage > 0)).to_numpy()
     fin = lambda v: None if pd.isna(v) else round(float(v), 1)
@@ -30,7 +35,7 @@ def wells(u: pd.DataFrame, limit: int = 4000) -> list:
 
 
 def surface(state, formation: str, lat_min: float = 0.0, lat_max: float = 90.0, res: float = 0.15, ell_z: float = 40.0, dev: str = "cpu") -> dict | None:
-    s, tr = state, state.lab[(state.lab.name == formation) & state.lab.lat.between(lat_min, lat_max)]
+    s, tr = state, with_depth_ref(state.lab[(state.lab.name == formation) & state.lab.lat.between(lat_min, lat_max)])
     if len(tr) < 8:
         return None
     pad = 0.3
@@ -85,7 +90,7 @@ def hotspots(state) -> list:
             if any(np.hypot(*(P[i] - P[j])) < 30 for j in taken):
                 continue
             taken.append(i)
-            sub = g.iloc[idx]
+            sub = with_depth_ref(g.iloc[idx])
             rate = green / rows
             eff = (rows / w) / (g.coverage.sum() / g.wellbore.nunique())
             out.append({"id": f"{f}#{len(taken)}", "formation": f, "kind": kind, "x": round(float(P[i][0]), 1), "y": round(float(P[i][1]), 1), "lat": float(g.lat.iloc[i]), "lon": float(g.lon.iloc[i]),

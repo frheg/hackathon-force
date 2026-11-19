@@ -100,3 +100,22 @@ def test_targets_api_and_target_param():
             m = c.get("/api/meta", params={"target": s["id"]}).json()
             assert m["words"]["hit"] and m["title"] == s["title"]
         assert c.post("/api/targets/build", json={"mode": "well", "table": "nope", "success": ["a|eq|1"]}).status_code == 400
+
+
+def test_scene_works_for_well_level_targets_without_depth_columns():
+    from se.api import scene
+    u = units(30).assign(top=0.0, bot=3000.0)
+    w = scene.wells(u)
+    assert len(w) == 30 and w[0]["kb"] is None and w[0]["wd"] is None
+
+
+def test_store_reads_both_roots_and_writes_to_the_writable_one(tmp_path, monkeypatch):
+    import json
+    from se.targets import store
+    ro, rw = tmp_path / "ro", tmp_path / "rw"
+    for root, tid in ((ro, "aaa"), (rw, "bbb")):
+        (root / tid).mkdir(parents=True)
+        (root / tid / "spec.json").write_text(json.dumps({"id": tid, "title": tid, "built": tid}))
+    monkeypatch.setattr(store, "ROOT", rw); monkeypatch.setattr(store, "ROOTS", [rw, ro])
+    assert [t["id"] for t in store.saved()] == ["aaa", "bbb"]
+    assert store.path("aaa") == ro / "aaa" and store.path("new") == rw / "new"

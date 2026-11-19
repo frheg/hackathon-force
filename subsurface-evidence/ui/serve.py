@@ -11,10 +11,10 @@ BACKEND = os.environ.get("BACKEND_URL", "http://127.0.0.1:8300")
 app = FastAPI(docs_url=None, openapi_url=None)
 
 
-@app.api_route("/api/{path:path}", methods=["GET", "POST"])
+@app.api_route("/api/{path:path}", methods=["GET", "POST", "DELETE"])
 async def proxy(path: str, req: Request):
     async with httpx.AsyncClient(timeout=1800) as c:
-        r = await c.request(req.method, f"{BACKEND}/api/{path}", params=req.query_params)
+        r = await c.request(req.method, f"{BACKEND}/api/{path}", params=req.query_params, content=await req.body(), headers={"content-type": req.headers.get("content-type", "application/json")} if req.method == "POST" else None)
     return Response(r.content, r.status_code, media_type=r.headers.get("content-type"))
 
 
