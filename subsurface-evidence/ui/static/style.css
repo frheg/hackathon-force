@@ -28,14 +28,7 @@ figure{margin:18px 0}figcaption{font-size:12.5px;color:var(--mut);margin-top:4px
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0}.tip{color:var(--mut);font-size:12.5px}.bar{height:7px;background:var(--data);min-width:2px}.bar.neg{background:var(--bad)}.track{width:110px;background:var(--faint);height:7px}
 label.chk{display:inline-flex;gap:5px;align-items:center;cursor:pointer;font-size:13px}input[type=range]{accent-color:var(--data);vertical-align:middle}
 .md h1,.md h2{font-size:18px;margin:22px 0 4px;border:0;padding:0}.md h2::before{content:""}.md li{margin:3px 0}.md code{background:var(--faint);padding:1px 4px}
-/* full-screen stages (3D, map) with floating, hideable, draggable panes */
-.stage{position:fixed;inset:44px 0 0 0;background:var(--paper)}.stage .fill{position:absolute;inset:0}#map{background:var(--faint)}
-.pane{position:absolute;z-index:10;width:310px;max-height:calc(100% - 24px);min-width:190px;min-height:42px;max-width:92%;overflow:hidden;resize:both;display:flex;flex-direction:column;background:var(--paper);border:1px solid var(--ink);font-size:13px}
-.pane .ph{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;border-bottom:1px solid var(--rule);cursor:move;font-weight:600;user-select:none;background:var(--faint)}
-.pane .ph button{background:none;border:0;cursor:pointer;color:var(--ink);font-size:15px;line-height:1;padding:0 4px}.pane .pb{padding:8px 10px;overflow:auto;flex:1;min-height:0}.pane.shut .pb{display:none}.pane.shut{width:auto;min-width:150px;min-height:0;height:auto!important;resize:none}
-.pane .pb p{margin:5px 0}.pane .pb .row{margin:5px 0}.pane .pb .hs{border-top:1px solid var(--rule);padding:8px 0;cursor:pointer}.pane .pb .hs:first-child{border-top:0}.pane .pb .hs:hover b,.pane .pb .hs.sel b{text-decoration:underline}
 .legend{display:flex;align-items:center;gap:8px;font:12px Inter,sans-serif;color:var(--mut)}.ramp{height:9px;width:150px;background:linear-gradient(90deg,rgba(31,95,153,.12),#1f5f99,#08306b)}
-#panes{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:12}.px{image-rendering:pixelated}
 :root[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]) .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}}
 @media(max-width:760px){#ctl label,#job{display:none}.pane{width:260px}}
@@ -47,8 +40,34 @@ body.busy #bar::after{content:"";position:absolute;left:0;bottom:-1px;height:3px
 #busy{font:12.5px Inter,sans-serif;color:var(--data);max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wait{position:absolute;z-index:11;top:54px;left:50%;transform:translateX(-50%);background:var(--paper);border:1px solid var(--ink);padding:6px 14px;font:13px Inter,sans-serif;display:flex;gap:10px;align-items:center;max-width:70%}
 .wait i{width:14px;height:14px;border:2px solid var(--rule);border-top-color:var(--ink);border-radius:50%;animation:spin .8s linear infinite;flex:none}@keyframes spin{to{transform:rotate(360deg)}}
-.pane .pb .hs.hov{background:var(--faint);outline:2px solid var(--ink);outline-offset:-2px}
-#panes{display:flex;gap:6px}
-/* docks: panes stack in a column and share its height (each scrolls inside); dragging a pane out makes it float */
-.dock{position:absolute;top:12px;bottom:12px;width:340px;display:flex;flex-direction:column;gap:8px;pointer-events:none;z-index:10}.dock.left{left:12px}.dock.right{right:12px;top:58px;width:380px}
-.dock .pane{position:relative;pointer-events:auto;width:auto;max-width:none;max-height:none;flex:0 1 auto;min-height:42px;resize:vertical}.dock .pane.shut{flex:0 0 auto}.pane.free{position:absolute;max-height:calc(100% - 24px)}
+
+/* 3D page: settings left, information right, both docked, foldable and collapsible; the plot fills the middle */
+.stage2{position:fixed;inset:44px 0 0 0;display:flex;background:var(--paper)}.plotwrap{flex:1;min-width:0;position:relative}.plotwrap .fill{position:absolute;inset:0}#map{background:var(--faint)}
+.side{position:relative;flex:none;width:var(--w,330px);display:flex;flex-direction:column;min-width:0;background:var(--paper);border-right:1px solid var(--rule);font:13px/1.45 Inter,system-ui,sans-serif;z-index:5}
+.side.right{border-right:0;border-left:1px solid var(--rule)}
+.side .sh{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--rule);background:var(--faint);font-weight:600}.side .sh>span{display:flex;gap:10px;align-items:center}
+.side .sh button:not(.lnk){background:none;border:0;cursor:pointer;color:var(--ink);font-size:18px;line-height:1;padding:0 4px}
+.side .sb{flex:1;overflow:auto;min-height:0}
+.side.shut{width:36px}.side.shut .sb,.side.shut .grip,.side.shut .sh .lnk{display:none}.side.shut .sh{flex-direction:column;gap:12px;height:100%;padding:10px 0;justify-content:flex-start;align-items:center}.side.shut .sh b{writing-mode:vertical-rl;order:2;letter-spacing:.04em}.side.shut .sh>span{order:1}
+.grip{position:absolute;top:0;bottom:0;width:7px;cursor:col-resize;z-index:6}#gripL{right:-4px}#gripR{left:-4px}.grip:hover{background:color-mix(in srgb,var(--ink) 18%,transparent)}
+.sec{border-bottom:1px solid var(--rule)}.sech{display:flex;gap:8px;align-items:center;padding:8px 12px;font-weight:600;cursor:pointer;user-select:none}.sech:hover{background:var(--faint)}
+.car::before{content:"▾";color:var(--mut)}.sec.fold .car::before{content:"▸"}.secb{padding:2px 12px 12px}.sec.fold .secb{display:none}
+.side p{margin:5px 0}.side .row{margin:6px 0}
+.side .hs{border-top:1px solid var(--rule);padding:8px 0;cursor:pointer}.side .hs:first-child{border-top:0}.side .hs:hover b,.side .hs.sel b{text-decoration:underline}.side .hs p{margin:6px 0 0;color:var(--mut);font-size:13px}.side .hs.hov{background:var(--faint);outline:2px solid var(--ink);outline-offset:-2px}
+.wait{top:10px}
+@media(max-width:900px){.side{--w:260px!important}}
+
+/* small, consistent corner radius: --r for controls and chips, --rp for panels */
+:root{--r:6px;--rp:10px}
+select,input[type=text],input[type=search],input[type=number],button.btn{border-radius:var(--r)}
+button.btn{padding:4px 12px}
+#links a{border-radius:var(--r)}
+.tag{border:1px solid color-mix(in srgb,currentColor 38%,transparent);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.note{border-radius:0 var(--r) var(--r) 0}
+.stage2{padding:8px;gap:8px}.side{border:1px solid var(--rule);border-radius:var(--rp);overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,.07)}.side.right{border:1px solid var(--rule)}
+.side .sh{border-radius:var(--rp) var(--rp) 0 0}.sec:last-child{border-bottom:0}
+.plotwrap{border:1px solid var(--rule);border-radius:var(--rp);overflow:hidden}
+.side .hs{border-radius:var(--r);padding-left:6px;padding-right:6px}
+.wait{border-radius:var(--r)}.ramp{border-radius:4px}.bar,.track{border-radius:3px}
+.legend span[style*="background"]{border-radius:2px}
+#gripL{right:-7px}#gripR{left:-7px}

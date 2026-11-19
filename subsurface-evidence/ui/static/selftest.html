@@ -45,11 +45,16 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     F().location.reload(); await sleep(1500); F().location.hash = "scene";
     await waitFor(() => $("#p3") && $("#p3").data && $("#p3").data.length > 3 && D().querySelector(".hs"), 90000);
     const g3 = $("#p3"); ok("3D: unusual areas listed and numbered", /#1 /.test($(".hs b").textContent), $(".hs b").textContent);
-    const mb = D().querySelector(".modebar-container"), pn = D().querySelector("#pane-sc-hs"), r1 = mb.getBoundingClientRect(), r2 = pn.getBoundingClientRect();
-    ok("3D: the areas pane does not cover the plot toolbar", r2.top >= r1.bottom - 1 || r2.left >= r1.right || r2.right <= r1.left, `toolbar bottom ${Math.round(r1.bottom)}, pane top ${Math.round(r2.top)}`);
-    ok("panes are resizable", F().getComputedStyle(pn).resize !== "none");
-    const rc = D().querySelector("#pane-sc-ctl").getBoundingClientRect(), rk = D().querySelector("#pane-sc-key").getBoundingClientRect();
-    ok("left panes stack without covering each other", rc.bottom <= rk.top + 1, `controls bottom ${Math.round(rc.bottom)}, key top ${Math.round(rk.top)}`);
+    const mb = D().querySelector(".modebar-container"), r1 = mb.getBoundingClientRect(), sR = D().querySelector("#sideR").getBoundingClientRect(), sL = D().querySelector("#sideL").getBoundingClientRect();
+    ok("layout: the plot toolbar is not covered by either sidebar", r1.left >= sL.right - 1 && r1.right <= sR.left + 1, `toolbar ${Math.round(r1.left)}-${Math.round(r1.right)}, left bar ends ${Math.round(sL.right)}, right bar starts ${Math.round(sR.left)}`);
+    ok("all settings are in the left sidebar", ["#reg", "#ref", "#pal", "#cmin", "#cmax", "#cw", "#c-sp", "#c-res", "#ex", "#op", "#sv-id", "#sv-inspect"].every((q) => $(q) && $(q).closest("#sideL")), "");
+    ok("all information is in the right sidebar", ["#hs", "#keybody"].every((q) => $(q) && $(q).closest("#sideR")), "");
+    const wPlot = () => D().querySelector(".plotwrap").getBoundingClientRect().width, w0 = wPlot(); $("#colL").click(); await sleep(1300); const wShut = $("#sideL").getBoundingClientRect().width, w1 = wPlot();
+    ok("the 3D plot follows its container after a sidebar change (redrawn, not stretched)", Math.abs($("#p3")._fullLayout.width - w1) <= 2, `layout ${$("#p3")._fullLayout.width} px vs container ${Math.round(w1)} px`); $("#colR").click(); await sleep(400); const w2 = wPlot();
+    ok("sidebars collapse to a strip and the plot grows", wShut < 60 && w1 > w0 + 200 && w2 > w1 + 200, `left bar ${Math.round(wShut)} px; plot ${Math.round(w0)} -> ${Math.round(w1)} -> ${Math.round(w2)} px`);
+    $("#colL").click(); $("#colR").click(); await sleep(500); ok("and expand again", Math.abs(wPlot() - w0) < 4, `${Math.round(wPlot())} vs ${Math.round(w0)}`);
+    const sec = D().querySelector("#sec-display"), h0 = sec.getBoundingClientRect().height; sec.querySelector(".sech").click(); await sleep(300); const h1 = sec.getBoundingClientRect().height; sec.querySelector(".sech").click(); await sleep(300);
+    ok("sections fold and unfold", h1 < h0 / 3 && sec.getBoundingClientRect().height > h1 + 50, `${Math.round(h0)} -> ${Math.round(h1)} px`);
     await F().Plotly.relayout(g3, { "scene.camera": { eye: { x: 0.31, y: -0.42, z: 0.23 } } }); await sleep(500);
     $("#cs").click(); await waitFor(() => D().body.classList.contains("busy") === false, 60000); await sleep(1500);
     const eye = g3._fullLayout.scene.camera.eye; ok("3D: camera unchanged after a refresh", Math.abs(eye.x - 0.31) < 0.02 && Math.abs(eye.y + 0.42) < 0.02, JSON.stringify(eye));
@@ -81,6 +86,12 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     ok("sheet hover says it is a model estimate, not an observation", !!sf && /not an observation/.test(sf.hovertemplate), sf ? sf.hovertemplate.replace(/<[^>]*>/g, " ").slice(0, 140) : "none");
     ok("box hover leads with what the box is", $("#p3").data.some((d) => d.type === "mesh3d" && /Area #\d+: (higher|lower) than the .* average/.test(d.text || "")));
     ok("area list says the share, the count and the comparison", /of \d+ .* vs .*across/.test($(".hs").textContent.replace(/\s+/g, " ")), $(".hs p").textContent.slice(0, 120));
+    // --- no jitter: switching things on and off keeps axis ranges, aspect and camera fixed
+    const rngs = () => { const sc = $("#p3")._fullLayout.scene; return JSON.stringify([sc.xaxis.range.map(Math.round), sc.yaxis.range.map(Math.round), sc.zaxis.range.map(Math.round), Object.values(sc.aspectratio).map((v) => +v.toFixed(3))]); };
+    await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(600); const jr0 = rngs(), jc0 = JSON.stringify($("#p3")._fullLayout.scene.camera.eye); let jOk = true, jWhere = "";
+    for (const id of ["#cm", "#cs", "#cw", "#cb"]) { $(id).click(); await sleep(1100); if (rngs() !== jr0) { jOk = false; jWhere += id + " "; } $(id).click(); await sleep(1100); }
+    ok("toggling coast, sheets, wells and boxes does not change the axis ranges or aspect", jOk, jOk ? jr0 : "changed by " + jWhere);
+    ok("and does not move the camera", JSON.stringify($("#p3")._fullLayout.scene.camera.eye) === jc0, jc0);
     // --- colour picker and key
     F().location.hash = "scene"; await waitFor(() => $("#p3") && $("#p3").data && $("#p3").data.length > 3 && $("#keybody") && $("#pal"), 90000);
     ok("colour key explains a stick and lists the classes with counts", /one well's interval inside one formation/.test($("#keybody").textContent) && D().querySelectorAll("#keybody table tr").length === 5, D().querySelectorAll("#keybody table tr").length + " classes");
@@ -90,7 +101,13 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     ok("palette picker recolours the sticks", $("#p3").data.some((d) => d.type === "scatter3d" && d.line && d.line.color === "#fde725") && /#fde725/.test($("#keybody").innerHTML.toLowerCase()));
     $("#cmax").value = 0.1; $("#cmax").dispatchEvent(new Event("input", { bubbles: true })); await sleep(1500);
     ok("colour range changes the class limits", /under 1\.0%/.test($("#keybody").textContent), $("#keybody table").textContent.replace(/\s+/g, " ").slice(0, 120));
-    $("#pal").value = "blue"; $("#pal").dispatchEvent(new Event("change", { bubbles: true })); $("#cmax").value = 0.2; $("#cmax").dispatchEvent(new Event("input", { bubbles: true })); await sleep(800);
+    $("#cmin").value = 0.05; $("#cmin").dispatchEvent(new Event("input", { bubbles: true })); await sleep(1500);
+    const shc = $("#p3").data.find((d) => d.type === "surface" && /Model estimate/.test(d.hovertemplate || ""));
+    ok("colour range can start above zero (from 5% to 10%)", /under 5\.5%/.test($("#keybody").textContent) && shc && Math.abs(shc.cmin - 0.05) < 1e-9 && Math.abs(shc.cmax - 0.1) < 1e-9, $("#keybody table").textContent.replace(/\s+/g, " ").slice(0, 110) + " | sheet " + (shc && shc.cmin + ".." + shc.cmax));
+    $("#cmin").value = 0.09; $("#cmin").dispatchEvent(new Event("input", { bubbles: true })); $("#cmax").value = 0.03; $("#cmax").dispatchEvent(new Event("input", { bubbles: true })); await sleep(800);
+    ok("the low end can never reach the high end", Number($("#cmin").value) < Number($("#cmax").value), `from ${$("#cmin").value} to ${$("#cmax").value}`);
+    $("#cmin").value = 0; $("#cmin").dispatchEvent(new Event("input", { bubbles: true }));
+    $("#pal").value = "blue"; $("#pal").dispatchEvent(new Event("change", { bubbles: true })); $("#cmax").value = 0.2; $("#cmax").dispatchEvent(new Event("input", { bubbles: true })); $("#cmin").value = 0; $("#cmin").dispatchEvent(new Event("input", { bubbles: true })); await sleep(800);
     // --- depth stretch acts at every position
     const az = () => $("#p3")._fullLayout.scene.aspectratio.z, setEx = async (v) => { $("#ex").value = v; $("#ex").dispatchEvent(new Event("input", { bubbles: true })); await sleep(700); };
     await setEx(2); const z2 = az(); await setEx(4); const z4 = az(); await setEx(8); const z8 = az(); await setEx(30); const z30 = az(); await setEx(12);
@@ -112,6 +129,24 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     $("#v-top").click(); await sleep(800); const eyeTop = $("#p3")._fullLayout.scene.camera.eye; ok("top view looks straight down", eyeTop.z > 2 && Math.abs(eyeTop.x) < 0.1, JSON.stringify(eyeTop));
     F().location.hash = "map"; ok("old #map address lands on the 3D page", !!(await waitFor(() => F().location.hash === "#scene" && $("#p3"), 30000)));
     ok("the Map page is gone from the menu", ![...D().querySelectorAll("#links a")].some((a) => a.textContent === "Map"));
+    // --- seismic inspector (side pane: 2D view and 3D cube)
+    F().location.hash = "scene"; await waitFor(() => $("#sv-id") && $("#p3") && $("#p3").data && $("#p3").data.length > 3, 90000);
+    const f2 = (el, t) => el.dispatchEvent(new Event(t, { bubbles: true }));
+    $("#sv-id").value = "sleipner_08p08"; f2($("#sv-id"), "change"); await sleep(1500); $("#sv-base").value = "sleipner_94p08"; f2($("#sv-base"), "change"); await sleep(1500);
+    $("#sv-inspect").click(); ok("Inspect opens its views in the right sidebar and its controls in the left", !!(await waitFor(() => $("#sec-insp") && $("#si2d") && $("#si2d").data && $("#si3d") && $("#si3d").data, 90000)));
+    ok("2D view: inline section heatmap with line numbers on the axis", $("#si2d").data[0].type === "heatmap" && /Crossline/.test($("#si2d").data[0].hovertemplate) && $("#si2d").data[0].x.length > 20, $("#si2d").data[0].hovertemplate.replace(/<[^>]*>/g, " ").slice(0, 90));
+    ok("3D view: two sections, a time slice and the survey box", $("#si3d").data.filter((d) => d.type === "surface").length === 3 && $("#si3d").data.some((d) => d.type === "scatter3d" && d.name === "survey box"));
+    ok("info lists the survey, sampling, lines, amplitude, our wells and the credit", /Sampling/.test($("#siinfo").textContent) && /Our wells/.test($("#siinfo").textContent) && /Equinor/.test($("#siinfo").textContent) && /difference/.test($("#siinfo").textContent), $("#siinfo").textContent.replace(/\s+/g, " ").slice(0, 100));
+    const hz = $("#si2d").data[0]; $("#si2d").emit("plotly_hover", { points: [{ data: { type: "heatmap" }, x: hz.x[10], y: hz.y[10], z: 0.2 }] }); await sleep(300);
+    ok("hover reads out position and amplitude", /inline \d+, crossline \d+/.test($("#sihov").textContent) && /amplitude/.test($("#sihov").textContent), $("#sihov").textContent.slice(0, 120));
+    const il0 = $("#si-ilv").textContent; $("#si-il").value = Number($("#si-il").value) + 6; f2($("#si-il"), "input"); await sleep(2500);
+    ok("inline slider moves the section and the curtain in the big scene", $("#si-ilv").textContent !== il0 && $("#p3").data.some((d) => d.type === "surface" && d.name === "sleipner_08p08" && new RegExp("inline " + $("#si-ilv").textContent).test(d.hovertemplate)), il0 + " -> " + $("#si-ilv").textContent);
+    D().querySelector('[name="si-mode"][value="time"]').checked = true; f2(D().querySelector('[name="si-mode"][value="time"]'), "change"); await sleep(2500);
+    ok("time slice mode: map-like view with inline on the vertical axis and the wells marked", $("#si2d").data[0].type === "heatmap" && /Inline %\{y\}/.test($("#si2d").data[0].hovertemplate) && $("#si2d").data.some((d) => d.mode === "markers+text"), "");
+    const y0 = JSON.stringify($("#si2d").data[0].y.slice(0, 2)); D().querySelector('[name="si-mode"][value="inline"]').checked = true; f2(D().querySelector('[name="si-mode"][value="inline"]'), "change"); await sleep(2000);
+    const tm = JSON.stringify($("#si2d").data[0].y.slice(0, 3)); $("#sv-v").value = 2.4; f2($("#sv-v"), "input"); $("#si-d").click(); await sleep(2500);  // at 2.0 km/s one ms of two-way time is exactly one metre, so use another velocity
+    ok("depth toggle rescales the vertical axis by the velocity (x1.2 at 2.4 km/s)", Math.abs($("#si2d").data[0].y[1] / (JSON.parse(tm)[1] || 1) - 1.2) < 0.01 && /Depth/.test($("#si2d").layout.yaxis.title.text), tm + " -> " + JSON.stringify($("#si2d").data[0].y.slice(0, 3)));
+    $("#sv-inspect").click(); await sleep(500); ok("Close inspector removes both parts", !D().querySelector("#sec-insp") && !D().querySelector("#sec-inspc") && /Inspect seismic/.test($("#sv-inspect").textContent));
   } catch (e) { R.push("ERROR " + e); }
   document.getElementById("out").textContent = R.join("\n") + "\nDONE";
 })();

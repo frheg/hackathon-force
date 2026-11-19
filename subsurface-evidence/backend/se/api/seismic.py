@@ -90,5 +90,51 @@ def curtain(survey: str, axis: str = "inline", index: int = 0, tstep: int = 2, b
         a = a - np.asarray(btr[rows][:, ::tstep], dtype=np.float32)
     q = np.clip(np.round(a / scale * 127), -127, 127).astype(np.int8)
     t = m["t0_ms"] + np.arange(0, q.shape[1]) * m["dt_ms"] * tstep
+    d = np.r_[0.0, np.cumsum(np.hypot(np.diff(xy[sel, 0]), np.diff(xy[sel, 1])))]
     return {"survey": survey, "axis": axis, "index": int(pick), "x": xy[sel, 0].round(2).tolist(), "y": xy[sel, 1].round(2).tolist(), "lat": ll[sel, 0].round(5).tolist(), "lon": ll[sel, 1].round(5).tolist(),
+            "il": ilxl[sel, 0].tolist(), "xl": ilxl[sel, 1].tolist(), "dist_km": d.round(3).tolist(), "amp_p99": float(scale),
             "t_ms": t.round(1).tolist(), "amp": q.T.tolist(), "traces": int(len(sel)), "credit": CREDIT.get(m["dataset"], ""), "diff_with": baseline}
+
+
+@router.get("/slice")
+def time_slice(survey: str, t_ms: float = 1000.0, baseline: str | None = None):
+    """Amplitudes at one two-way time on the inline x crossline grid (missing traces are null), int8 scaled by the survey's 99th percentile.
+    x, y: the cell positions in the scene's km frame, for placing the slice in 3D."""
+    ll, xy, ilxl, tr = geo(survey)
+    m = meta(survey)
+    k = int(np.clip(round((t_ms - m["t0_ms"]) / m["dt_ms"]), 0, tr.shape[1] - 1))
+    v = np.asarray(tr[:, k], dtype=np.float32)
+    if baseline:
+        _, _, bilxl, btr = geo(baseline)
+        key = {(i, j): n for n, (i, j) in enumerate(map(tuple, bilxl))}
+        rows = np.array([key.get(tuple(r), -1) for r in ilxl])
+        if not (rows >= 0).any():
+            raise HTTPException(400, "the two surveys share no traces")
+        v = np.where(rows >= 0, v - np.asarray(btr[:, k][np.clip(rows, 0, None)], dtype=np.float32), np.nan)
+    ui, uj = np.unique(ilxl[:, 0]), np.unique(ilxl[:, 1])
+    ii, jj = np.searchsorted(ui, ilxl[:, 0]), np.searchsorted(uj, ilxl[:, 1])
+    amp = np.full((len(ui), len(uj)), np.nan); X = amp.copy(); Y = amp.copy()
+    amp[ii, jj], X[ii, jj], Y[ii, jj] = v, xy[:, 0], xy[:, 1]
+    q = np.where(np.isnan(amp), np.nan, np.clip(np.round(amp / m["amp_p99"] * 127), -127, 127))
+    cut = lambda a, d=0: [[None if np.isnan(x) else (int(x) if d == 0 else round(float(x), d)) for x in r] for r in a]
+    return {"survey": survey, "t_ms": float(m["t0_ms"] + k * m["dt_ms"]), "il": ui.tolist(), "xl": uj.tolist(), "amp": cut(q), "x": cut(X, 2), "y": cut(Y, 2), "amp_p99": float(m["amp_p99"]), "diff_with": baseline}
+
+
+@router.get("/wells")
+def survey_wells(survey: str):
+    """Our wells inside the survey footprint, each with its nearest trace (inline, crossline) and the distance to it."""
+    from scipy.spatial import cKDTree
+
+    _, xy, ilxl, _ = geo(survey)
+    names = wells_inside().get(survey, {}).get("wells", [])
+    if not names:
+        return []
+    u = pd.read_parquet(OUT / "units.parquet").drop_duplicates("wellbore").set_index("wellbore")
+    out = []
+    tree = cKDTree(xy)
+    for n in names:
+        la, lo = float(u.loc[n, "lat"]), float(u.loc[n, "lon"])
+        p = scene.xy(la, lo)[0]
+        d, i = tree.query(p)
+        out.append({"name": n, "lat": la, "lon": lo, "x": float(p[0]), "y": float(p[1]), "il": int(ilxl[i, 0]), "xl": int(ilxl[i, 1]), "dist_m": round(float(d) * 1000)})
+    return out

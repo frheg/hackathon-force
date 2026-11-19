@@ -172,3 +172,21 @@ def test_scene_cache_and_neighbour_switch():
         assert flat.size and np.allclose(flat, flat[0])  # without neighbours the sheet is the formation rate everywhere
         fine = c.get("/api/scene", params={**p, "res": 0.05}).json()["surfaces"][0]
         assert len(fine["x"]) > len(a["surfaces"][0]["x"]) * 2  # finer grid
+
+
+def test_seismic_slice_wells_and_line_numbers():
+    import numpy as np
+    from se.api.main import app
+    with TestClient(app) as c:
+        sv = c.get("/api/seismic/surveys").json()
+        if not sv:
+            pytest.skip("no seismic indexed")
+        sid = sv[0]["id"]
+        l = c.get("/api/seismic/lines", params={"survey": sid}).json()
+        cu = c.get("/api/seismic/curtain", params={"survey": sid, "axis": "inline", "index": l["inline"][len(l["inline"]) // 2]}).json()
+        assert len(cu["il"]) == len(cu["xl"]) == len(cu["x"]) == cu["traces"] and cu["dist_km"][0] == 0 and cu["dist_km"][-1] > 0 and cu["amp_p99"] > 0
+        sl = c.get("/api/seismic/slice", params={"survey": sid, "t_ms": 1000}).json()
+        assert len(sl["amp"]) == len(sl["il"]) and len(sl["amp"][0]) == len(sl["xl"]) and abs(sl["t_ms"] - 1000) <= sv[0]["dt_ms"]
+        a = np.array([[v if v is not None else np.nan for v in r] for r in sl["amp"]]); assert np.isfinite(a).sum() > 100 and np.nanmax(np.abs(a)) <= 127
+        for w in c.get("/api/seismic/wells", params={"survey": sid}).json():
+            assert w["dist_m"] >= 0 and w["il"] and w["xl"]
