@@ -19,7 +19,8 @@ def xy(df: pd.DataFrame, lat0: float = 60.0) -> np.ndarray:
 
 class Spatial:
     name, title, needs = "spatial", "Neighbours", ("name", "lat", "lon", "wellbore", "n_green", "coverage")
-    doc = "Neighbouring same-formation units' green-row share, beyond the formation rate."
+    doc = "Neighbouring same-group units' success share, beyond the group rate."
+    words = {"rows": "described rows", "hit": "name a green mineral", "short": "green"}
 
     def __init__(self, ell: float = 20.0, k: float = 30.0, strat: Strat | None = None):
         self.ell, self.k, self._strat = ell, k, strat
@@ -59,5 +60,5 @@ class Spatial:
 
     def why(self, row: pd.Series) -> str:
         t = self.terms(pd.DataFrame([row])).iloc[0]
-        return (f"{int(t.n)} same-formation units within {3 * self.ell:.0f} km; distance-weighted green share {t.wy / t.wc:.1%}" if t.n
-                else f"no same-formation unit within {3 * self.ell:.0f} km: no effect")
+        return (f"{int(t.n)} same-group units within {3 * self.ell:.0f} km; distance-weighted share ({self.words["short"] if hasattr(self, "words") else "green"}) {t.wy / t.wc:.1%}" if t.n
+                else f"no same-group unit within {3 * self.ell:.0f} km: no effect")

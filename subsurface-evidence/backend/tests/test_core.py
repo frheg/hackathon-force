@@ -64,3 +64,39 @@ def test_api_shape():
         e = c.get("/api/unit", params={"id": u["unit"]}).json()["estimate"]
         assert 0 < e["rate"] < 1 and e["parts"][0]["layer"] == "base"
         assert len(c.get("/api/kb").json()) >= 7
+
+
+def test_builder_filters():
+    from se.targets.builder import apply
+    d = pd.DataFrame({"a": ["OIL", "GAS", "DRY", None], "n": [0, 5, 1, 7]})
+    assert apply(d, ["a|in|OIL,GAS"]).tolist() == [True, True, False, False]
+    assert apply(d, ["a|has|ga", "n|gt|1"]).tolist() == [False, True, False, False]
+    assert apply(d, ["a|notnull"]).tolist() == [True, True, True, False]
+    with pytest.raises(ValueError):
+        apply(d, ["nope|eq|x"])
+
+
+def test_spec_id_is_stable_and_recipe_specific():
+    from se.targets.builder import spec_id
+    a = {"mode": "well", "table": "t", "population": [], "success": ["x|eq|1"], "group": "g", "title": "one"}
+    assert spec_id(a) == spec_id({**a, "title": "other title"})  # same recipe, same id: title is not part of it
+    assert spec_id(a) != spec_id({**a, "success": ["x|eq|2"]})
+
+
+def test_too_little_data_is_refused():
+    from se.targets import store
+    with pytest.raises(ValueError, match="too little data"):
+        store.evaluate({"title": "none", "mode": "well", "table": "wellbore_exploration", "population": [], "success": ["wlbContent|eq|NOPE"], "group": "wlbMainArea"})
+
+
+def test_targets_api_and_target_param():
+    from se.api.main import app
+    with TestClient(app) as c:
+        t = c.get("/api/targets").json()
+        assert t["builtin"]["id"] == "green_clay" and len(t["presets"]) >= 3
+        o = c.get("/api/targets/options").json()
+        assert {x["table"] for x in o["well"]} == {"wellbore_exploration", "wellbore_development"}
+        for s in t["saved"][:1]:  # a saved target answers the same endpoints with its own words
+            m = c.get("/api/meta", params={"target": s["id"]}).json()
+            assert m["words"]["hit"] and m["title"] == s["title"]
+        assert c.post("/api/targets/build", json={"mode": "well", "table": "nope", "success": ["a|eq|1"]}).status_code == 400

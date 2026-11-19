@@ -10,7 +10,8 @@ from .base import logit
 
 class Strat:
     name, title, needs = "strat", "Formation", ("name", "n_green", "coverage")
-    doc = "Share of described rows that name a green mineral in this formation vs overall."
+    doc = "Share of trials that succeed in this group (formation, area) vs overall."
+    words = {"rows": "described rows", "hit": "name a green mineral", "short": "green"}
 
     def __init__(self, a: float = 30.0):
         self.a = a
@@ -32,4 +33,4 @@ class Strat:
 
     def why(self, row: pd.Series) -> str:
         v = self.table.get(row["name"])
-        return f"{row['name']}: {v[2]} of {v[1]} described rows name a green mineral ({v[0]:.1%} smoothed) vs {self.p0:.1%} overall" if v else f"{row['name']}: not in training, no effect"
+        return f"{row['name']}: {v[2]} of {v[1]} {self.words['rows']} {self.words['hit']} ({v[0]:.1%} smoothed) vs {self.p0:.1%} overall" if v else f"{row['name']}: not in training, no effect"

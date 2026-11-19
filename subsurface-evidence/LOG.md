@@ -176,3 +176,24 @@ Status tags: `[done]` `[open]` `[wrong]` (kept, never deleted: a wrong turn is d
 - **Data explorer** Catalog with origin of every dataset; any FactPages table: columns profile, rows, chart (click bar = filter), map.
 - **Not tested in a browser** Explorer clicks (table pick, bar-click filter); the API calls behind them were tested with curl. Fine-map button against a live GPU worker.
 - **Bug** Plotly cdnjs URL 404 (wrong path); moved to jsdelivr `plotly.js-dist-min@2.35.2`.
+
+## L029 Target builder (phase 2) [done]
+- **Design** A target is a recipe (table, population filters, success filters, mode well|interval) that builds the SAME unit table the engine already reads (trials -> `coverage`, successes -> `n_green`; names kept so layers and validation run unchanged). Mode well: one unit per wellbore, group column plays "formation". Mode interval: rows of DST, mud, core or casing tables fall into well x formation intervals by depth. Same recipe, same id (title not part of it).
+- **Guard** Refuses with fewer than 200 labelled units, 20 successes or 40 wells (tested). Validation is `cv.run(quick=True)`: no sweeps, no log layer (its columns are empty, so it stays silent). Coverage bins for the in-bin AUC are adapted per mode.
+- **Results (held-out 40 km blocks, 90 % ranges from resampling wells)**
+  - Wildcat well found oil or gas: 1,436 wells, 45.7 % base. Area prior +0.0171 [0.0077, 0.0272] helps; neighbours -0.0011 [-0.0149, 0.0112] no evidence.
+  - DST flowed oil: 1,430 units, 2,356 tests, 69.7 %. Formation +0.0240 [0.0077, 0.0369] helps; neighbours +0.0019 [-0.0004, 0.0044] no evidence.
+  - Heavy mud (> 1.6 sg): 18,235 units, 63,704 measurements, 26.3 %. Formation +0.1926 [0.1687, 0.2105]; neighbours +0.1149 [0.0988, 0.1293]. Large, but mud weight mostly follows depth and the pressure regime, so the formation largely stands in for depth: a strong score, not a geological discovery.
+- **Reading** The engine generalises; the green-clay result (small skill) is a property of that target, not of the engine. Targets with a physical driver (mud weight, depth) score high.
+- **Open** Continuous targets (porosity, mud weight as a number) need another likelihood. Seismic and report-text facts (phases 3 to 5) are not started.
+
+## L030 Depth reference and map bugs [done]
+- **Depth** Formation tops are measured depth along the well from the rig floor (KB, median 25 m above sea level). Checked on 2,054 wells: shallowest top minus (KB + water depth) = 0.0 m median (p10..p90 0.0..0.5). So seabed = KB + water depth, the water column is empty above it. The 3D view now has a switch: rig floor, sea level (minus KB), seabed (minus KB and water depth). Still MD, not TVD (no deviation surveys loaded).
+- **Bug: map shading drifted from the dots** The grid is linear in latitude, Leaflet stretches an image linearly in Web Mercator: drift up to 63 km (Hordaland) and 172 km (Nordland). Fixed by sampling rows evenly in Mercator y.
+- **Bug: "missing API key"** I had switched the basemap to a provider that requires a key; back to OpenStreetMap tiles (no key), darkened by CSS in dark mode.
+- **Panes** Floating panes sat behind Leaflet's own stacking layers on the map page: fixed (`.fill` creates its own stacking context).
+
+## L031 GPU use [partly done, honest]
+- **What the GPU is good for here** Cells x units distance matrices: maps and the 3D estimate surfaces. About 10x on the CPU at fine resolution (L025). Everything else is small: validation is scikit-learn fits and resampling of a few thousand rows, hotspot scans touch a few hundred units.
+- **Done** The 3D surfaces now go to the GPU worker when one is configured (the proxy wakes it), CPU fallback otherwise; the header shows where the last heavy job ran. Fine maps already did.
+- **Not claimed** Making idle components use the GPU would not make anything faster. Real GPU load comes with phase 3 (a local LLM reading the 112 GB of reports) and phase 4 (seismic attributes), both GPU-bound. One LLM at a time on the GPU applies.

@@ -1,12 +1,13 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Subsurface Evidence</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <link rel="stylesheet" href="style.css"></head><body>
-<aside id="nav"><div class="brand"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 2 3 7v10l9 5 9-5V7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 7l9 5 9-5M12 12v10" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><div><b>Subsurface</b><span>Evidence</span></div></div>
-<nav id="links"></nav><div class="foot"><button id="theme" class="ghost">Theme</button><button id="collapse" class="ghost">Collapse</button></div></aside>
-<div id="shell"><header id="top"><div id="crumb"></div><div id="chips"></div></header><main id="view"><div class="skeleton">loading…</div></main></div>
+<header id="bar"><a class="title" href="#start">Subsurface Evidence</a><nav id="links"></nav>
+<div id="ctl"><label>Target <select id="target"></select></label><span id="job" class="tip"></span><button id="theme" class="lnk">light / dark</button></div></header>
+<main id="view"></main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="app.js"></script></body></html>

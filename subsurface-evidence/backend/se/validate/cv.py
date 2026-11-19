@@ -27,6 +27,14 @@ def load() -> pd.DataFrame:
     return pd.read_parquet(OUT / "units.parquet").join(pd.read_parquet(OUT / "log_features.parquet"), how="left")
 
 
+LOG_COLS = ("GR", "RHOB", "NPHI", "PEF", "DTC", "RDEP", "DNSEP", "n_log")
+
+
+def without_logs(u: pd.DataFrame) -> pd.DataFrame:
+    """Targets other than green clay have no log features: the columns exist but are empty, so the log layer stays silent (never guesses)."""
+    return u.assign(**{c: np.nan for c in LOG_COLS if c not in u.columns})
+
+
 def blocks(df: pd.DataFrame) -> np.ndarray:
     p = xy(df)
     return np.floor(p[:, 0] / BLOCK_KM).astype(int) * 100003 + np.floor(p[:, 1] / BLOCK_KM).astype(int)
@@ -75,7 +83,7 @@ def dev(ng, cov, p) -> float:
     return float(-2 * np.sum(np.asarray(ng, float) * np.log(p) + (np.asarray(cov, float) - np.asarray(ng, float)) * np.log(1 - p)))
 
 
-def strat_auc(df: pd.DataFrame, p) -> tuple:
+def strat_auc(df: pd.DataFrame, p) -> tuple:  # bins: module COV_BINS (run() may set it per target)
     """AUC of 'has a green row' within each coverage bin, weighted by bin size. Returns (mean, per-bin list)."""
     out, w = [], []
     cb = pd.cut(df.coverage, COV_BINS, right=False)
@@ -119,14 +127,20 @@ def boot(r: pd.DataFrame, a: str, b: str | None, n: int = 200, seed: int = 0) ->
     return {"delta_gain": float(gain(r, "p_" + a) - (gain(r, "p_" + b) if b else 0.0)), "p05": float(lo), "p95": float(hi), "significant": bool(lo > 0 or hi < 0)}
 
 
-def run() -> dict:
+def run(u: pd.DataFrame | None = None, out=OUT, quick: bool = False, name: str = "share of described rows naming a green mineral", cov_bins=None) -> dict:
+    """Validate a unit table. quick=True (other targets): no sweeps and no log layer, the rest identical. Writes results.json and oof.parquet to `out`."""
+    global COV_BINS
+    if cov_bins:
+        COV_BINS = cov_bins
     t0 = time.time()
-    u = load()
+    u = load() if u is None else without_logs(u)
     lab = u[u.label >= 0]
-    res = {"built": time.strftime("%Y-%m-%d %H:%M"), "device": device(), "target": "share of described rows naming a green mineral", "block_km": BLOCK_KM, "folds": K,
+    res = {"built": time.strftime("%Y-%m-%d %H:%M"), "device": device(), "target": name, "block_km": BLOCK_KM, "folds": K,
            "data": {"units": int(len(u)), "labelled": int(len(lab)), "wellbores_labelled": int(lab.wellbore.nunique()), "rows": int(lab.coverage.sum()), "green_rows": int(lab.n_green.sum()),
                     "base_rate": float(lab.n_green.sum() / lab.coverage.sum()), "with_logs": int(lab.GR.notna().sum()), "wellbores_with_logs": int(lab[lab.GR.notna()].wellbore.nunique())}}
     res["sweep_ell"], res["sweep_a"] = [], []
+    if quick:
+        return _finish(u, res, out, t0, quick)
     for ell in (5, 10, 20, 40, 80, 160, 320):
         r = oof(u, ell=ell)
         calibrate(r)
@@ -146,13 +160,20 @@ def run() -> dict:
         calibrate(r)
         sub = r[r.GR.notna()]
         res["sweep_C"].append({"C": C, **metrics(sub, sub["p_strat+logs"], sub.p_base), "delta_vs_strat": boot(sub, "strat+logs", "strat", n=100)})
+    return _finish(u, res, out, t0, quick)
+
+
+def _finish(u, res, out, t0, quick) -> dict:
     r = oof(u)
     res["platt"] = calibrate(r)
     res["ablation"] = {n: metrics(r, r["p_" + n], r.p_base) for n in VARIANTS}
     sub = r[r.GR.notna()]
-    res["ablation_logs_subset"] = {n: metrics(sub, sub["p_" + n], sub.p_base) for n in VARIANTS}
-    res["delta"] = {"strat_over_constant": boot(r, "strat", None), "spatial_over_strat": boot(r, "strat+spatial", "strat"), "logs_over_strat_on_logs_subset": boot(sub, "strat+logs", "strat"),
-                    "full_over_strat+spatial_on_logs_subset": boot(sub, "full", "strat+spatial")}
+    res["delta"] = {"strat_over_constant": boot(r, "strat", None), "spatial_over_strat": boot(r, "strat+spatial", "strat")}
+    if quick:  # no log data for this target: the log variants equal "strat" and are left out of the report
+        res["ablation"] = {n: v for n, v in res["ablation"].items() if "logs" not in n and n != "full"}
+    else:
+        res["ablation_logs_subset"] = {n: metrics(sub, sub["p_" + n], sub.p_base) for n in VARIANTS}
+        res["delta"].update({"logs_over_strat_on_logs_subset": boot(sub, "strat+logs", "strat"), "full_over_strat+spatial_on_logs_subset": boot(sub, "full", "strat+spatial")})
     res["by_coverage"] = strat_auc(r, r["p_full"])[1]
     res["reliability_raw"], res["reliability_calibrated"] = reliability(r, r["pr_full"]), reliability(r, r["p_full"])
     bins = [(0, 5), (5, 15), (15, 40), (40, 100), (100, 1e9)]
@@ -167,8 +188,9 @@ def run() -> dict:
     res["contradictions"] = {"reported_but_unexpected": r[r.n_green >= 2].nsmallest(25, "tail_many")[cols + ["tail_many"]].round(5).to_dict("records"),
                              "expected_but_not_reported": r[(r.n_green == 0) & (r.coverage >= 8)].nsmallest(25, "tail_none")[cols + ["tail_none"]].round(5).to_dict("records")}
     res["seconds"] = round(time.time() - t0)
-    (OUT / "results.json").write_text(json.dumps(res, indent=1, default=float))
-    r.to_parquet(OUT / "oof.parquet")
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "results.json").write_text(json.dumps(res, indent=1, default=float))
+    r.to_parquet(out / "oof.parquet")
     return res
 
 
