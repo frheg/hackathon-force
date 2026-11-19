@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from common import HERE, LLM_MODEL, LLM_URL, ModelBusy, ModelError, model_choice, page
-from sketches import atlas, barrier, copilot, decline, detective, doctor, logs, losttime, seismic, spud, status, tieback
+from sketches import atlas, atlas_seis, barrier, copilot, decline, detective, doctor, logs, losttime, seismic, spud, status, tieback
 
 GROUPS = [
     {"id": "explore", "name": "Explore and appraise", "color": "#5aa8ff"},
@@ -143,6 +143,7 @@ for a in APPS:
     api.include_router(a["router"])
 api.include_router(status.router)
 api.include_router(atlas.router)  # the data dashboard: its own page and menu, not one of the tools
+api.include_router(atlas_seis.router)  # its seismic explorer
 
 
 @api.get("/", response_class=HTMLResponse)
@@ -178,7 +179,7 @@ async def models():
     return {"default": LLM_MODEL, "models": names or [LLM_MODEL]}
 
 
-ASSETS = {"style.css": "text/css", "shell.js": "text/javascript", "atlas.js": "text/javascript"}
+ASSETS = {"style.css": "text/css", "shell.js": "text/javascript", "theme.js": "text/javascript", "atlas.js": "text/javascript"}
 
 
 @api.get("/{name}")

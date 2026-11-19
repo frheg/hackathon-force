@@ -47,8 +47,9 @@
         <a class="brand" href="${root}/"><span class="brand-mark"></span><span><b>Subsurface Studio</b></span></a>
         <nav class="nav"><a href="${root}/" class="${current ? '' : 'on'}">Overview</a><a href="${root}/atlas/">Data Atlas</a></nav>
         ${nav}
-        <div class="side-foot"><label class="field">Language model<select id="model-pick"></select></label>
+        <div class="side-foot"><span id="theme-slot"></span><label class="field">Language model<select id="model-pick"></select></label>
           <p style="margin:.6rem 0 0">FORCE VibeCode Hackathon<br />Stavanger, November 2026<br /><a href="${root}/status/">Connections</a></p></div>`
+      document.getElementById('theme-slot')?.replaceWith(window.theme.button())
       models()
     })
     .catch(() => {})
@@ -115,13 +116,23 @@
   function shelfMap(el, view = [62.5, 4], zoom = 5) {
     const m = L.map(el, { scrollWheelZoom: false, zoomSnap: 0.5 }).setView(view, zoom)
     // dark: Esri dark grey canvas; light: Esri ocean (bathymetry). Both show coast and names.
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches
+    const dark = window.theme.isDark()
     const esri = "https://server.arcgisonline.com/ArcGIS/rest/services"
     const [base, ref, native] = dark ? ["Canvas/World_Dark_Gray_Base", "Canvas/World_Dark_Gray_Reference", 15] : ["Ocean/World_Ocean_Base", "Ocean/World_Ocean_Reference", 9]
     L.tileLayer(`${esri}/${base}/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 13, maxNativeZoom: native, attribution: "Esri, GEBCO, NOAA, Garmin" }).addTo(m)
     L.tileLayer(`${esri}/${ref}/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 13, maxNativeZoom: native }).addTo(m)
     return m
   }
+
+  // a theme switch repaints the charts already on the page: text and grid at least (marks keep the colours they were drawn with)
+  addEventListener('themechange', () => {
+    if (!window.Plotly) return
+    const grid = css('--line'), tick = { color: css('--muted'), size: 11 }
+    for (const d of document.querySelectorAll('.js-plotly-plot')) {
+      Plotly.relayout(d, { 'font.color': css('--ink-2'), 'legend.font.color': css('--ink-2'), 'hoverlabel.bgcolor': css('--panel-2'), 'hoverlabel.bordercolor': css('--line-2'), 'hoverlabel.font.color': css('--ink'),
+        'xaxis.gridcolor': grid, 'yaxis.gridcolor': grid, 'xaxis.zerolinecolor': grid, 'yaxis.zerolinecolor': grid, 'xaxis.linecolor': grid, 'yaxis.linecolor': grid, 'xaxis.tickfont': tick, 'yaxis.tickfont': tick })
+    }
+  })
 
   window.studio = { esc, css, call, busy, num, plotLayout, plotConfig, palette, shelfMap }
 })()

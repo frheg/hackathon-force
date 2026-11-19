@@ -555,17 +555,24 @@ def index():
     return page("atlas.html")
 
 
+# the hackathon team picked a seismic task: the page shows these; the rest stay on disk and in CATALOG (FOCUS = None
+# shows everything again)
+FOCUS = {"adele", "f3"}
+
+
 @router.get("/api/catalog")
-def catalog():
+def catalog(all: bool = False):
     out = []
     for c in CATALOG:
+        if FOCUS and not all and c["id"] not in FOCUS:
+            continue
         p = DATA_DIR / c["path"]
         prof = OUT / f"{c['profile']}.json"
         pending = list(p.rglob("*.part")) if p.is_dir() else []
         out.append({**c, "present": p.exists() and dir_size(p) > 0, "bytes": dir_size(p),
                     "downloading": bool(pending), "profiled": bool(c["profile"]) and prof.exists(),
                     "built": (load_json(prof, {}) or {}).get("built") if c["profile"] and prof.exists() else None})
-    return {"datasets": out, "links": load_json(OUT / "links.json")}
+    return {"datasets": out, "links": load_json(OUT / "links.json"), "focus": sorted(FOCUS or [])}
 
 
 @router.get("/api/profile/{name}")

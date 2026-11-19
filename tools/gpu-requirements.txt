@@ -1,0 +1,32 @@
+# installed into .venv-gpu by tools/gpu-setup, after torch and torchvision
+# seismic and well data
+segyio
+obspy
+lasio
+pylops
+bruges
+# arrays, tables, out-of-core
+numpy
+scipy
+pandas
+pyarrow
+zarr
+dask
+numba
+xarray
+# vision, 3D segmentation, training loops
+scikit-image
+scikit-learn
+monai
+kornia
+timm
+segmentation-models-pytorch
+lightning
+tensorboard
+einops
+tqdm
+# notebooks and plots
+jupyterlab
+ipywidgets
+matplotlib
+plotly

@@ -22,7 +22,7 @@ report), [docs/research_notes](docs/research_notes/), [docs/research.md](docs/re
 | `logs/` | **Log Lens** | Lithology from logs on 10 unseen wells, explained interval by interval | 79.5 % accuracy, competition score -0.513 (winner -0.47) |
 | `decline/` | **Field Pulse** | Production, Arps decline from a chosen month, forecast against Sodir's remaining reserves, a field brief | |
 | `status/` | Connections | what the app can reach | |
-| `atlas/` | **Data Atlas** | A dashboard over every dataset, for learning the data: what each holds, key numbers, charts with a line on how to read them, sample records, how the datasets join, a well lookup across all of them, and a glossary of 107 terms | |
+| `atlas/` | **Data Atlas** | A dashboard over every dataset, for learning the data: what each holds, key numbers, charts with a line on how to read them, sample records, how the datasets join, a well lookup across all of them, and a glossary. Set to seismic for the event (`FOCUS` in `sketches/atlas.py`): Adele and F3 only, with a slice explorer (inline, crossline, time slice; amplitude or coherence; F3 labels), trace, spectrum and SEG-Y header per click, and QC charts. Pages: **Start here** (every word explained with the cube's numbers), **Resolution & granularity** (measured spectra and correlation, a calculator, a feature-size checker, a patch planner), a 3D box beside the explorer (the current slice strong, a faint stack of the other slices through it), dark/light toggle. Guide: `docs/seismic-guide.md` | |
 
 Guard rails: the SQL runs read-only with file and network access off; every model answer cites FactPages tables
 (`[F:tops]`) or report passages (`[S3]`); the model never reads seismic images, only numbers; wells and fields are
@@ -68,6 +68,7 @@ From `app/`, once:
     uv run python -m sketches.seismic           # seismic index and its scores, about a minute
     uv run python -m sketches.scorecard retrieval   # DISKOS-QA retrieval scores, a few minutes
     uv run python -m sketches.atlas             # the Data Atlas profiles (data/atlas/), about a minute
+    uv run python -m sketches.atlas_seis        # seismic explorer: Adele as int8 copies (1.6 GB) and both cube profiles, under a minute
 
 Then:
 
@@ -98,7 +99,7 @@ The answer scorecard (GPU time, about four model calls per question per mode):
     app/common.py          model calls (retries, JSON schemas), embeddings, the FactPages database, wellbore lookups
     app/fetch_data.py      downloads the data
     app/sketches/          one module per tool, plus reports.py (search), wells.py (well facts), scorecard.py,
-                           train_logs.py, atlas.py (the data dashboard and its profiles)
+                           train_logs.py, atlas.py (the data dashboard and its profiles), atlas_seis.py (its seismic explorer)
     app/pages/             one HTML page per tool, style.css and shell.js shared (plain JS; Plotly and Leaflet)
     app/tests/             pytest
     data/                  datasets found before the event, indexes and caches (ignored by git)
@@ -113,3 +114,19 @@ The answer scorecard (GPU time, about four model calls per question per mode):
 - Seismic (SEG-Y): write a numpy cube (inline, trace, sample) next to the F3 files, add it to `CUBES` in
   `sketches/seismic.py`, rebuild.
 - Azure OpenAI or other models: set `LLM_URL` and `LLM_MODEL`.
+
+
+## Dev shell (nix)
+
+The app ships as Docker; this flake is only a shell for working on the data (SEG-Y tools, notebooks, GPU training).
+
+    git add flake.nix flake.lock tools .envrc   # a git flake only sees tracked files
+    nix develop                # or let direnv do it: `direnv allow` once, then cd in (the `.envrc` is `use flake`)
+    nix develop .#viz          # + ParaView and PyVista for 3D
+    nix develop .#gpu          # then `gpu-setup` once: .venv-gpu with PyTorch (CUDA 12.8, the 5060 Ti is sm_120)
+
+Do not use `nix develop path:.`: a `path:` flake copies the whole directory, `data/` included (125 GB), into the nix store.
+
+In the shell: `segy info|text|slice|trace FILE` (headers, geometry, amplitudes, dead traces and spikes, a PNG of any
+slice; `tools/segy`), `jupyter lab`, segyio, obspy, devito, xarray, zarr, dask, numba, scikit-image, rasterio, gdal,
+duckdb, ffmpeg, nvtop and more (`flake.nix`).

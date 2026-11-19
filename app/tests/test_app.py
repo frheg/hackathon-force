@@ -3,6 +3,7 @@
     uv run pytest -q
 """
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -211,7 +212,7 @@ def test_atlas_safe_drops_nan():
 
 
 def test_atlas_catalog_splits_origins():
-    d = client.get("/atlas/api/catalog").json()["datasets"]
+    d = client.get("/atlas/api/catalog", params={"all": True}).json()["datasets"]
     assert {x["origin"] for x in d} == {"mail", "earlier"}
     assert next(x for x in d if x["id"] == "completion")["path"] == "official/completion_reports"
 
@@ -236,3 +237,52 @@ def test_atlas_completion_report_pages():
     p = client.get("/atlas/api/page/15/9-F-5", params={"file": f, "n": 3}).json()
     assert p["markdown"] and p["ai"]["page_summary"]
     assert client.get("/atlas/api/pdf/..%2F..%2F/x.pdf").status_code == 404  # nothing outside the reports folder
+
+
+def test_atlas_focus_is_seismic():
+    d = client.get("/atlas/api/catalog").json()
+    assert {x["id"] for x in d["datasets"]} == {"adele", "f3"} and d["focus"]
+
+
+def test_atlas_seismic_slices():
+    from sketches import atlas_seis
+
+    r = client.get("/atlas/api/seis/slice/adele", params={"axis": "time", "i": 500})
+    assert r.headers["x-shape"] == "301,2731" and len(r.content) == 301 * 2731
+    r = client.get("/atlas/api/seis/slice/f3", params={"axis": "inline", "i": 10, "split": "test1"})
+    assert r.headers["x-shape"] == "510,701" and r.headers["x-labels"] == "1"  # amplitudes, then labels
+    assert client.get("/atlas/api/seis/slice/adele", params={"axis": "inline", "i": 301}).status_code == 404
+    t = client.get("/atlas/api/seis/trace/adele", params={"il": 205, "xl": 401}).json()
+    assert (t["il"], t["xl"]) == (4585, 6071) and t["peak"] > 300000  # the spike
+    assert next(h for h in t["header"] if h["byte"] == 189)["value"] == 4585
+    a = np.random.default_rng(0).normal(size=(5, 5, 40))
+    assert atlas_seis.semblance(np.repeat(a[:1, :1], 5, 0).repeat(5, 1), (3, 3, 1), (1, 1, 9)).min() > 0.99  # identical traces
+    assert atlas_seis.semblance(a, (3, 3, 1), (1, 1, 9)).mean() < 0.5  # noise
+
+
+def test_atlas_resolution_is_measured():
+    for cube, inline_m in (("adele", 37.5), ("f3", 25.0)):
+        r = client.get(f"/atlas/api/seis/resolution/{cube}").json()
+        assert r["inline"]["d"] == inline_m
+        for ax in ("crossline", "inline", "time"):
+            assert r[ax]["nyquist"] > r[ax]["k95"] > 0  # both cubes are sampled finer than their content needs
+
+
+def test_atlas_slice_step_is_a_light_preview():
+    full = client.get("/atlas/api/seis/slice/adele", params={"axis": "inline", "i": 10})
+    light = client.get("/atlas/api/seis/slice/adele", params={"axis": "inline", "i": 10, "step": 3})
+    assert light.headers["x-shape"] == "334,911" and len(light.content) * 8 < len(full.content)
+    assert client.get("/atlas/api/seis/slice/adele", params={"axis": "inline", "i": 10, "step": 0}).status_code == 422
+
+
+def test_theme_script_is_served():
+    r = client.get("/theme.js")
+    assert r.status_code == 200 and "studio-theme" in r.text
+
+
+def test_atlas_volume_is_a_coarse_copy():
+    r = client.get("/atlas/api/seis/volume/adele")
+    ni, nx, nt = map(int, r.headers["x-shape"].split(","))
+    assert (ni, nx, nt) == (51, 69, 83) and len(r.content) == ni * nx * nt and r.headers["x-steps"] == "6,40,12"
+    f = client.get("/atlas/api/seis/volume/f3", params={"split": "test2"})
+    assert f.headers["x-shape"].split(",")[1] == "15"

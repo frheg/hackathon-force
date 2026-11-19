@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Look inside SEG-Y files without loading them whole.
+
+    segy info FILE [--full]                  headers, geometry, amplitudes, spectrum; --full reads every trace
+    segy text FILE                           the textual header only
+    segy slice FILE inline|crossline|time N  a PNG of one slice (N: line number, or time in ms)
+    segy trace FILE INLINE CROSSLINE         one trace: its header fields and amplitudes
+
+Byte positions default to the standard 189 (inline) and 193 (crossline); --iline and --xline change them, and
+9 and 21 (the old rev 0 habit) are tried when the standard ones give no grid.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+import segyio
+
+TF = segyio.TraceField
+
+
+def open_segy(path, iline, xline):
+    """The file with its inline/crossline grid when there is one, else just the traces. Returns (file, has_grid)."""
+    for il, xl in dict.fromkeys([(iline, xline), (9, 21)]):
+        try:
+            f = segyio.open(path, iline=il, xline=xl)
+            f.mmap()
+            return f, True
+        except Exception:  # segyio raises several kinds of error for a file that is not a regular grid
+            continue
+    f = segyio.open(path, ignore_geometry=True)
+    f.mmap()
+    return f, False
+
+
+def text_header(path) -> list[str]:
+    raw = Path(path).open("rb").read(3200)
+    # 0x43 is "C" in ASCII, the first character of the first card; otherwise it is EBCDIC
+    s = raw.decode("ascii" if raw[0] == 0x43 else "cp037", errors="replace")
+    s = s.replace("Ý", "[").replace("¨", "]")  # Petrel writes brackets with codes this codec reads as these
+    return [s[i:i + 80].rstrip() for i in range(0, len(s), 80)]
+
+
+def coord_scale(f) -> float:
+    s = f.header[0][TF.SourceGroupScalar]
+    return 1.0 if s == 0 else (float(s) if s > 0 else 1.0 / -s)
+
+
+def spread(a: np.ndarray) -> str:
+    u = np.unique(a)
+    return f"{u.min()} to {u.max()}" + (f" in steps of {np.unique(np.diff(u))[0]}" if len(u) > 1 and len(np.unique(np.diff(u))) == 1 else f", {len(u)} values")
+
+
+def cmd_text(a):
+    print("\n".join(text_header(a.file)))
+
+
+def cmd_info(a):
+    f, grid = open_segy(a.file, a.iline, a.xline)
+    n, dt = f.tracecount, segyio.tools.dt(f) / 1000
+    t = f.samples
+    print(f"== {a.file}\n{n:,} traces, {len(t)} samples at {dt:g} ms, {t[0]:g} to {t[-1]:g} ms, "
+          f"format {f.format.name if hasattr(f.format, 'name') else f.format}, {Path(a.file).stat().st_size / 1e9:.2f} GB")
+    print("\n== textual header")
+    print("\n".join(line for line in text_header(a.file) if line[4:].strip()))
+    print("\n== binary header (non-zero fields)")
+    for k, v in f.bin.items():
+        if v:
+            print(f"  {str(k):28s} byte {int(k):5d}  {v}")
+
+    print("\n== trace headers (fields that are not zero, over a sample of traces)")
+    idx = np.linspace(0, n - 1, min(n, 4000)).astype(int)
+    hs = [f.header[int(i)] for i in idx]
+    for k in hs[0].keys():
+        v = np.array([h[k] for h in hs])
+        if v.any():
+            print(f"  {str(k):30s} byte {int(k):3d}  " + (f"always {v[0]}" if len(np.unique(v)) == 1 else spread(v)))
+
+    il, xl = f.attributes(TF.INLINE_3D)[:], f.attributes(TF.CROSSLINE_3D)[:]
+    print("\n== geometry")
+    if grid:
+        print(f"  inlines     {spread(f.ilines)}\n  crosslines  {spread(f.xlines)}")
+        print(f"  grid is {'full' if len(f.ilines) * len(f.xlines) == n else 'NOT full'}: "
+              f"{len(f.ilines)} x {len(f.xlines)} = {len(f.ilines) * len(f.xlines):,} positions, {n:,} traces")
+    else:
+        print("  no regular inline/crossline grid found with these byte positions (try --iline and --xline)")
+    k = coord_scale(f)
+    x, y = f.attributes(TF.CDP_X)[:] * k, f.attributes(TF.CDP_Y)[:] * k
+    print(f"  coordinate scalar {f.header[0][TF.SourceGroupScalar]} (multiply by {k:g})")
+    print(f"  X {x.min():,.1f} to {x.max():,.1f}   Y {y.min():,.1f} to {y.max():,.1f}   "
+          f"box {(x.max() - x.min()) / 1000:.1f} x {(y.max() - y.min()) / 1000:.1f} km = {(x.max() - x.min()) * (y.max() - y.min()) / 1e6:.0f} km2")
+    if grid and n > len(f.xlines):
+        along = 1 if f.sorting == segyio.TraceSortingFormat.INLINE_SORTING else len(f.ilines)
+        across = len(f.xlines) if along == 1 else 1
+        d = lambda i, j: np.hypot(x[i] - x[j], y[i] - y[j])
+        print(f"  spacing: {d(0, along):.2f} m between neighbouring crosslines, {d(0, across):.2f} m between neighbouring stored inlines")
+    print(f"  corners (inline, crossline, X, Y): " + "; ".join(f"({il[i]}, {xl[i]}, {x[i]:,.0f}, {y[i]:,.0f})" for i in (0, n - 1)))
+
+    print("\n== amplitudes (2,000 traces spread over the file)")
+    s = np.stack([f.trace[int(i)] for i in np.linspace(0, n - 1, min(n, 2000)).astype(int)]).astype(np.float64)
+    live = s[np.abs(s).max(1) > 0]
+    p = {q: np.percentile(live, q) for q in (0.1, 1, 50, 99, 99.9)}
+    print(f"  dead (all zero) traces in the sample: {len(s) - len(live)} of {len(s)}")
+    print("  percentiles " + "  ".join(f"p{q:g} {v:,.1f}" for q, v in p.items()) + f"   std {live.std():,.1f}")
+    big = np.abs(live).max()
+    print(f"  largest |amplitude| {big:,.1f} = {big / max(abs(p[99.9]), 1e-9):.1f} x the 99.9th percentile"
+          + ("  <- a spike or a bad trace: clip before you plot or train" if big > 10 * abs(p[99.9]) else ""))
+    sp = np.abs(np.fft.rfft(live * np.hanning(live.shape[1]), axis=1)).mean(0)
+    fr = np.fft.rfftfreq(live.shape[1], dt / 1000)
+    db = 20 * np.log10(sp / sp.max() + 1e-12)
+    print(f"  spectrum: peak {fr[sp.argmax()]:.1f} Hz, half power {fr[db > -6].min():.1f} to {fr[db > -6].max():.1f} Hz, Nyquist {fr[-1]:.0f} Hz")
+    rms = np.sqrt((live ** 2).mean(0))
+    edges = np.linspace(0, len(t), 9).astype(int)
+    print("  RMS by time: " + "  ".join(f"{t[e]:.0f} ms {rms[e:e2].mean():,.0f}" for e, e2 in zip(edges[:-1], edges[1:])))
+
+    if a.full:
+        print("\n== every trace")
+        mx = np.empty(n, np.float32)
+        for i in range(0, n, 20000):
+            mx[i:i + 20000] = np.abs(f.trace.raw[i:i + 20000]).max(1)
+        dead = np.where(mx == 0)[0]
+        print(f"  dead traces: {len(dead):,} ({len(dead) / n:.2%})")
+        if len(dead):
+            ux = np.unique(xl[dead])
+            print(f"    on {len(ux)} crosslines" + (f": {ux.tolist()}" if len(ux) <= 12 else f" from {ux.min()} to {ux.max()}")
+                  + f"; on {len(np.unique(il[dead]))} inlines")
+        for i in np.where(mx > 10 * abs(p[99.9]))[0][:10]:
+            tr = f.trace[int(i)]
+            print(f"  spike: inline {il[i]} crossline {xl[i]} at {t[int(np.abs(tr).argmax())]:g} ms, value {tr[np.abs(tr).argmax()]:,.1f}")
+
+
+def cmd_slice(a):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    f, grid = open_segy(a.file, a.iline, a.xline)
+    if not grid:
+        sys.exit("no inline/crossline grid: try --iline and --xline (see `segy info`)")
+    t = f.samples
+    try:
+        if a.what == "inline":
+            img, ext, labels = f.iline[a.n].T, [f.xlines[0], f.xlines[-1], t[-1], t[0]], ("crossline", "time (ms)")
+        elif a.what == "crossline":
+            img, ext, labels = f.xline[a.n].T, [f.ilines[0], f.ilines[-1], t[-1], t[0]], ("inline", "time (ms)")
+        else:
+            img, ext, labels = f.depth_slice[int(np.abs(t - a.n).argmin())], [f.xlines[0], f.xlines[-1], f.ilines[0], f.ilines[-1]], ("crossline", "inline")
+    except (KeyError, IndexError):
+        sys.exit(f"no such {a.what}; inlines are {spread(f.ilines)}, crosslines {spread(f.xlines)}, times {t[0]:g} to {t[-1]:g} ms")
+    c = np.percentile(np.abs(img[np.isfinite(img)]), a.clip) or 1.0
+    fig, ax = plt.subplots(figsize=(14, 6), dpi=110)
+    im = ax.imshow(img, cmap=a.cmap, vmin=-c, vmax=c, aspect="auto", extent=ext, origin="lower" if a.what == "time" else "upper", interpolation="bilinear")
+    ax.set(xlabel=labels[0], ylabel=labels[1], title=f"{Path(a.file).name}: {a.what} {a.n}   (colour range ±{c:,.1f}, the {a.clip:g}th percentile)")
+    fig.colorbar(im, ax=ax, pad=0.01, shrink=0.8, label="amplitude")
+    out = a.output or f"{Path(a.file).stem}_{a.what}{a.n}.png"
+    fig.savefig(out, bbox_inches="tight")
+    print(out)
+
+
+def cmd_trace(a):
+    f, grid = open_segy(a.file, a.iline, a.xline)
+    il, xl = f.attributes(TF.INLINE_3D)[:], f.attributes(TF.CROSSLINE_3D)[:]
+    hit = np.where((il == a.inline) & (xl == a.crossline))[0]
+    if not len(hit):
+        sys.exit(f"no trace at inline {a.inline}, crossline {a.crossline}")
+    i = int(hit[0])
+    h, tr, t = f.header[i], f.trace[i].astype(np.float64), f.samples
+    print(f"trace {i} of {f.tracecount:,}: inline {a.inline}, crossline {a.crossline}")
+    for k in h.keys():
+        if h[k]:
+            print(f"  {str(k):30s} byte {int(k):3d}  {h[k]:,}")
+    print(f"amplitudes: min {tr.min():,.2f} max {tr.max():,.2f} RMS {np.sqrt((tr ** 2).mean()):,.2f}, {(tr == 0).mean():.1%} zero samples")
+    if a.output:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(4, 8), dpi=110)
+        ax.plot(tr, t, "k", lw=0.8)
+        ax.fill_betweenx(t, 0, tr, where=tr > 0, color="k")
+        ax.invert_yaxis()
+        ax.set(xlabel="amplitude", ylabel="time (ms)", title=f"inline {a.inline} crossline {a.crossline}")
+        fig.savefig(a.output, bbox_inches="tight")
+        print(a.output)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def add(name, fn, *args, **kw):
+        s = sub.add_parser(name, **kw)
+        s.add_argument("file")
+        for a, k in args:
+            s.add_argument(a, **k)
+        s.add_argument("--iline", type=int, default=189, help="byte of the inline number (default 189)")
+        s.add_argument("--xline", type=int, default=193, help="byte of the crossline number (default 193)")
+        s.set_defaults(fn=fn)
+
+    add("text", cmd_text)
+    add("info", cmd_info, ("--full", dict(action="store_true", help="read every trace: dead traces and spikes, exactly")))
+    add("slice", cmd_slice, ("what", dict(choices=["inline", "crossline", "time"])), ("n", dict(type=float, help="line number, or time in ms")),
+        ("-o", dict(dest="output", help="PNG to write (default: next to you, named after the slice)")),
+        ("--clip", dict(type=float, default=99, help="percentile of |amplitude| for full colour (default 99)")),
+        ("--cmap", dict(default="seismic", help="matplotlib colormap (default seismic: red positive, blue negative)")))
+    add("trace", cmd_trace, ("inline", dict(type=int)), ("crossline", dict(type=int)), ("-o", dict(dest="output", help="plot it to this PNG")))
+    a = p.parse_args()
+    if hasattr(a, "n") and a.what != "time":
+        a.n = int(a.n)
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

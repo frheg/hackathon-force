@@ -1,5 +1,5 @@
 /* Subsurface Studio: a quiet, dense interface for working with data. One accent colour, flat surfaces, 1 px lines.
-   Dark by default, light when the system asks for it. */
+   Dark by default, light when the system asks for it; the toggle in the sidebar (theme.js) overrides both. */
 :root {
   --bg: #09090b;
   --panel: #0f0f12;
@@ -24,7 +24,7 @@
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #fafafa;
     --panel: #ffffff;
     --panel-2: #f4f4f5;
@@ -43,10 +43,29 @@
     color-scheme: light;
   }
 }
+:root[data-theme="light"] {
+  --bg: #fafafa;
+  --panel: #ffffff;
+  --panel-2: #f4f4f5;
+  --line: #e6e6ea;
+  --line-2: #d6d6dc;
+  --ink: #0b0b0d;
+  --ink-2: #3c3c44;
+  --muted: #6d6d77;
+  --accent: #2f63e0;
+  --accent-2: #2452c2;
+  --amber: #b07a0f;
+  --red: #cf3c35;
+  --green: #1f8f45;
+  --blue: #2f63e0;
+  --violet: #6f4fd6;
+  color-scheme: light;
+}
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body { background: var(--bg); color: var(--ink); font: 14px/1.55 var(--font); -webkit-font-smoothing: antialiased; min-height: 100vh; }
+html { font-size: clamp(16px, 0.45vw + 9px, 20px); } /* 16 px up to a 1,600 px screen, then growing to 20 px at 2,400 */
+body { background: var(--bg); color: var(--ink); font: 0.92rem/1.6 var(--font); -webkit-font-smoothing: antialiased; min-height: 100vh; }
 a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px; }
 a:hover { text-decoration-color: var(--ink); }
 h1, h2, h3 { margin: 0; letter-spacing: -0.015em; font-weight: 600; }
@@ -56,7 +75,12 @@ code, pre, .mono { font-family: var(--mono); font-size: 0.85em; }
 [hidden] { display: none !important; }
 
 /* frame */
-.shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; }
+.shell { --side-w: 14rem; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); min-height: 100vh; }
+html[data-side="closed"] .shell { --side-w: 0px; }
+html[data-side="closed"] .side { padding: 0; border: 0; overflow: hidden; opacity: 0; pointer-events: none; }
+.side-toggle { position: fixed; top: 10px; left: calc(var(--side-w, 14rem) + 8px); z-index: 45; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 30px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 6px; color: var(--ink-2); cursor: pointer; }
+.side-toggle:hover { color: var(--ink); border-color: var(--ink-2); }
+html[data-side="closed"] .side-toggle { left: 10px; }
 .side { position: sticky; top: 0; height: 100vh; overflow-y: auto; border-right: 1px solid var(--line); padding: 1rem 0.75rem 1.25rem; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 0.55rem; padding: 0.25rem 0.5rem 1.1rem; color: var(--ink); text-decoration: none; }
 .brand-mark { width: 16px; height: 16px; border-radius: 4px; background: var(--ink); flex: none; font-size: 0; }
@@ -70,11 +94,12 @@ code, pre, .mono { font-family: var(--mono); font-size: 0.85em; }
 .nav .dot, .nav .new { display: none; }
 .side-foot { margin-top: auto; padding: 1rem 0.5rem 0; font-size: 0.74rem; color: var(--muted); border-top: 1px solid var(--line); }
 .side-foot select { width: 100%; font-size: 0.8rem; padding: 0.35rem 0.5rem; margin-top: 0.3rem; }
+.theme-btn { width: 100%; justify-content: center; margin-bottom: 0.7rem; font-size: 0.8rem; padding: 0.35rem 0.6rem; }
 .side-foot label.field { color: var(--muted); font-size: 0.74rem; }
 .menu-btn { display: none; }
 
 .content { min-width: 0; }
-.page { max-width: 1360px; margin: 0 auto; padding: 1.75rem 2.25rem 3rem; }
+.page { max-width: 2200px; margin: 0 auto; padding: 2.6rem clamp(1.25rem, 2.4vw, 3.5rem) 3rem; } /* the top padding clears the menu button */
 .page-head { display: flex; gap: 2rem; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; padding-bottom: 1.1rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--line); }
 .eyebrow { font-size: 0.75rem; color: var(--muted); }
 .page-head h1 { font-size: 1.55rem; margin-top: 0.15rem; }
@@ -188,6 +213,7 @@ td.num, th.num { text-align: right; }
   .shell { grid-template-columns: 1fr; }
   .side { position: fixed; z-index: 30; width: 260px; background: var(--bg); transform: translateX(-100%); transition: transform 0.2s; }
   .side.open { transform: none; }
+  .side-toggle { display: none; }
   .menu-btn { display: inline-flex; position: fixed; top: 12px; right: 12px; z-index: 40; background: var(--panel); border: 1px solid var(--line-2); border-radius: 6px; padding: 0.35rem 0.6rem; color: var(--ink); cursor: pointer; }
   .page { padding: 1.1rem 16px 2.5rem; }
   .g2, .g3, .g4 { grid-template-columns: 1fr; }

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Builds .venv-gpu: PyTorch with CUDA 12.8 wheels (the 5060 Ti is Blackwell, compute capability 12.0, which needs
+# CUDA 12.8 or newer) plus tools/gpu-requirements.txt. Run it inside `nix develop .#gpu`; it is safe to run again.
+set -euo pipefail
+unset PYTHONPATH  # the nix shell sets it for its own Python 3.14; the venv has its own
+cd "$(git rev-parse --show-toplevel)"
+
+uv venv --python 3.13 --allow-existing .venv-gpu
+uv pip install --python .venv-gpu/bin/python torch torchvision --index-url https://download.pytorch.org/whl/cu128
+uv pip install --python .venv-gpu/bin/python -r tools/gpu-requirements.txt
+
+.venv-gpu/bin/python - <<'EOF'
+import torch
+
+print("torch", torch.__version__, "CUDA", torch.version.cuda)
+assert torch.cuda.is_available(), "no CUDA device: is this the .#gpu shell (LD_LIBRARY_PATH has /run/opengl-driver/lib)?"
+print(torch.cuda.get_device_name(0), "capability", torch.cuda.get_device_capability(0), "arch list", torch.cuda.get_arch_list())
+x = torch.randn(2048, 2048, device="cuda", dtype=torch.float16)
+print("fp16 matmul on the GPU:", float((x @ x).float().abs().mean()))
+EOF
+echo "done: open a new shell (exit, nix develop .#gpu) or run: source .venv-gpu/bin/activate"
