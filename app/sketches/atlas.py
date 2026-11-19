@@ -395,33 +395,75 @@ def p_completion() -> dict:
     return out
 
 
+REPORTS = COMPLETION / ("4462 fully public wellbore completion reports from the Norwegian continental shelf expl "
+                         "appraisal production")  # one folder per wellbore (30_9-12/WELL/), each report as PDF and JSON
+
+
 def json_files():
-    return sorted(COMPLETION.rglob("*.json")) + sorted(COMPLETION.rglob("*.JSON"))
+    return sorted(REPORTS.glob("*/WELL/*.JSON")) + sorted(REPORTS.glob("*/WELL/*.json"))
 
 
-def json_profile(limit: int = 400) -> dict | None:
-    """The structured reports, once unpacked: their shape from a sample of files."""
+def read_report(f) -> dict:
+    """A report's JSON is {its archive path: {original_document_metadata, pages}}; return the inner object."""
+    d = json.loads(f.read_text(errors="replace"))
+    return next(iter(d.values())) if len(d) == 1 and "pages" not in d else d
+
+
+@lru_cache(maxsize=1)
+def report_index() -> dict:
+    """Normalised wellbore name -> its report JSON files. Folder names spell the wellbore with _ for / and space."""
+    out: dict = {}
+    for f in json_files():
+        name = f.parent.parent.name
+        out.setdefault(norm(name.replace("_", "/", 1).replace("_", " ")), []).append(f)
+    return out
+
+
+def json_profile(limit: int = 600) -> dict | None:
+    """The structured reports: their shape from a random sample of files (each is 0.1 to 10 MB)."""
     files = json_files()
     if not files:
         return None
     rng = np.random.default_rng(5)
     pick = [files[i] for i in rng.choice(len(files), min(limit, len(files)), replace=False)]
-    keys, sizes, pages = Counter(), [], []
+    tags, elements, quality, kinds = Counter(), Counter(), Counter(), Counter()
+    n_pages, chars, doc_reliable, sizes = [], [], [], []
+    samples = []
     for f in pick:
         sizes.append(f.stat().st_size)
         try:
-            d = json.loads(f.read_text(errors="replace"))
-        except ValueError:
+            d = read_report(f)
+        except (ValueError, StopIteration):
             continue
-        if isinstance(d, dict):
-            keys.update(d.keys())
-            for v in d.values():
-                if isinstance(v, list):
-                    pages.append(len(v))
-                    break
-    pdfs = len(list(COMPLETION.rglob("*.pdf")) + list(COMPLETION.rglob("*.PDF")))
-    return {"json_files": len(files), "pdf_files": pdfs, "sampled": len(pick), "top_keys": [{"k": k, "n": v} for k, v in keys.most_common(20)],
-            "kb": hist(pd.Series(sizes) / 1024, 30, log=True), "items": hist(pd.Series(pages), 30) if pages else None}
+        pages = d.get("pages") or []
+        n_pages.append(len(pages))
+        q = (d.get("original_document_metadata") or {}).get("page_quality_summary") or {}
+        if q.get("total_pages"):
+            doc_reliable.append(100 * q.get("Reliable_pages", 0) / q["total_pages"])
+        for pg in pages:
+            ai, ocr = pg.get("AI") or {}, pg.get("OCR") or {}
+            quality[(pg.get("page_metadata") or {}).get("quality", "unknown")] += 1
+            tags.update(ai.get("tags") or [])
+            kinds["tables"] += bool(ai.get("has_tables"))
+            kinds["figures"] += bool(ai.get("has_figures"))
+            kinds["pages"] += 1
+            md = ocr.get("ocr_markdown") or ""
+            chars.append(len(md))
+            elements.update(e.get("type", "?") for e in (ocr.get("layout") or {}).get("elements") or [])
+            if len(samples) < 10 and ai.get("page_summary") and rng.random() < 0.01:
+                samples.append({"wellbore": f.parent.parent.name, "file": f.name, "page": pg.get("page_no"),
+                                "quality": (pg.get("page_metadata") or {}).get("quality"), "tags": ai.get("tags") or [],
+                                "summary": ai.get("page_summary"), "figures": ai.get("figure_details") or [],
+                                "text": md[:1500]})
+    total = kinds["pages"] or 1
+    return {"json_files": len(files), "pdf_files": len(list(REPORTS.glob("*/WELL/*.PDF")) + list(REPORTS.glob("*/WELL/*.pdf"))),
+            "wellbore_folders": len(report_index()), "sampled": len(pick), "pages_sampled": kinds["pages"],
+            "pages_est": int(np.mean(n_pages) * len(files)) if n_pages else 0, "median_pages": int(np.median(n_pages)) if n_pages else 0,
+            "table_share": r(kinds["tables"] / total * 100), "figure_share": r(kinds["figures"] / total * 100),
+            "quality": [{"k": k, "n": v} for k, v in quality.most_common()], "elements": [{"k": k, "n": v} for k, v in elements.most_common()],
+            "tags": [{"k": k, "n": v} for k, v in tags.most_common(30)], "pages": hist(pd.Series(n_pages), 30),
+            "chars": hist(pd.Series([c for c in chars if c > 0]), 30, log=True), "reliable": hist(pd.Series(doc_reliable), 20),
+            "mb": hist(pd.Series(sizes) / 1e6, 30, log=True), "samples": samples}
 
 
 def p_seismic() -> dict:
@@ -587,6 +629,7 @@ def well(name: str):
         hit = ch[ch.wellbores.map(lambda ws: key in ws)]
         out["passages"] = [{"doc": p.doc_name, "text": p.text[:600]} for p in hit.head(6).itertuples()]
         out["passage_count"] = len(hit)
+    out["reports"] = [f.name for f in report_index().get(key, [])]
     if out["in"].get("completion"):
         m = pd.read_csv(COMPLETION_META, encoding="utf-8-sig", usecols=["Wellbore Name", "Format", "Dataset Name", "File Size (MB)", "FolderFileName"])
         m = m[m["Wellbore Name"].map(norm) == key]
@@ -601,15 +644,49 @@ def well(name: str):
     return safe(out)
 
 
-@router.get("/api/report/{name:path}")
-def report(name: str):
-    """The structured completion report(s) for a wellbore, once unpacked: the first file's shape and opening items."""
-    key = norm(name)
-    files = [f for f in json_files() if norm(f.parent.name.replace("_", "/", 1)) == key or key.replace("/", "_") in f.name]
+@router.get("/api/reports/{name:path}")
+def reports_for(name: str):
+    """A wellbore's structured completion reports: document quality, and every page's summary, tags and quality."""
+    files = report_index().get(norm(name))
     if not files:
-        raise HTTPException(404, "no unpacked JSON report for this wellbore yet")
-    d = json.loads(files[0].read_text(errors="replace"))
-    return {"file": str(files[0].relative_to(COMPLETION)), "files": len(files), "preview": json.dumps(d, indent=1)[:12000]}
+        raise HTTPException(404, f"no unpacked report for {name}")
+    out = []
+    for f in files:
+        d = read_report(f)
+        meta = d.get("original_document_metadata") or {}
+        out.append({"file": f.name, "pdf": next((p.name for p in f.parent.glob(f.stem + ".[Pp][Dd][Ff]")), None),
+                    "title": meta.get("title"), "quality": meta.get("document_quality"), "summary": meta.get("page_quality_summary"),
+                    "released": meta.get("releaseDate"),
+                    "pages": [{"n": pg.get("page_no"), "quality": (pg.get("page_metadata") or {}).get("quality"),
+                               "summary": (pg.get("AI") or {}).get("page_summary"), "tags": (pg.get("AI") or {}).get("tags") or [],
+                               "tables": bool((pg.get("AI") or {}).get("has_tables")), "figures": bool((pg.get("AI") or {}).get("has_figures"))}
+                              for pg in d.get("pages") or []]})
+    return {"wellbore": norm(name), "folder": files[0].parent.parent.name, "reports": out}
+
+
+@router.get("/api/page/{name:path}")
+def report_page(name: str, file: str, n: int):
+    """One page in full: its markdown text, figure descriptions and layout."""
+    f = next((x for x in report_index().get(norm(name), []) if x.name == file), None)
+    if not f:
+        raise HTTPException(404, "no such report")
+    pg = next((p for p in read_report(f).get("pages") or [] if p.get("page_no") == n), None)
+    if not pg:
+        raise HTTPException(404, "no such page")
+    return {"n": n, "markdown": (pg.get("OCR") or {}).get("ocr_markdown") or "", "ai": pg.get("AI") or {},
+            "quality": (pg.get("page_metadata") or {}).get("quality"),
+            "elements": Counter(e.get("type") for e in ((pg.get("OCR") or {}).get("layout") or {}).get("elements") or [])}
+
+
+@router.get("/api/pdf/{folder}/{file}")
+def pdf(folder: str, file: str):
+    """The scanned original. Only files inside the reports folder are served."""
+    from fastapi.responses import FileResponse
+
+    p = (REPORTS / folder / "WELL" / file).resolve()
+    if REPORTS.resolve() not in p.parents or p.suffix.lower() != ".pdf" or not p.exists():
+        raise HTTPException(404, "no such PDF")
+    return FileResponse(p, media_type="application/pdf")
 
 
 if __name__ == "__main__":

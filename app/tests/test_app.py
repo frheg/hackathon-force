@@ -227,3 +227,12 @@ def test_atlas_well_joins_datasets():
 def test_atlas_reserves_use_latest_estimate():
     k = client.get("/atlas/api/profile/factpages").json()["kpis"]
     assert 1000 < k["remaining_oe"] < 5000  # summing every yearly estimate gives about 67,000
+
+
+def test_atlas_completion_report_pages():
+    r = client.get("/atlas/api/reports/15/9-F-5").json()
+    assert r["folder"] == "15_9-F-5" and r["reports"][0]["pages"]
+    f = r["reports"][0]["file"]
+    p = client.get("/atlas/api/page/15/9-F-5", params={"file": f, "n": 3}).json()
+    assert p["markdown"] and p["ai"]["page_summary"]
+    assert client.get("/atlas/api/pdf/..%2F..%2F/x.pdf").status_code == 404  # nothing outside the reports folder

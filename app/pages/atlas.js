@@ -303,9 +303,11 @@
       <div class="grid g2">${panel('Formation tops (FactPages)', w.tops.length ? table([['Unit', (r) => esc(r.unit)], ['Level', (r) => esc(r.level)], ['Top m', (r) => num(r.top), 'num'], ['Base m', (r) => num(r.base), 'num']], w.tops, 320) : '<div class="empty">No tops published.</div>')}
         ${panel('Casing and leak-off tests', w.casing.length ? table([['Casing', (r) => esc(r.type)], ['Size', (r) => esc(r.diameter)], ['Shoe m', (r) => num(r.depth), 'num'], ['Hole m', (r) => num(r.hole), 'num'], ['LOT g/cm³', (r) => (r.lot > 0 ? num(r.lot, 2) : '–'), 'num']], w.casing, 320) : '<div class="empty">None published.</div>', `${T('lot', 'LOT')} is the strongest mud the rock below the shoe held.`)}</div>
       ${w.passages ? panel(`Report passages (${w.passage_count} in DISKOS-QA)`, w.passages.map((p) => `<div class="qa"><div class="muted small">${esc(p.doc)}</div><div class="sample" style="max-height:140px">${esc(p.text)}</div></div>`).join('')) : ''}
+      ${w.reports && w.reports.length ? panel('Completion report, page by page', '<div id="wrep"></div>', 'the structured JSON of the final well report: every page summarised, tagged and graded; click a page for its full text.') : ''}
       ${w.completion ? panel('Completion report files', table([['Format', (r) => esc(r.Format)], ['Dataset', (r) => esc(r['Dataset Name'])], ['MB', (r) => num(r['File Size (MB)'], 1), 'num'], ['File', (r) => `<span class="mono">${esc(r.FolderFileName)}</span>`]], w.completion, 260), 'the PDF is the scanned original; the JSON is the same report turned into structured text by the dataset\'s pipeline.') : ''}
       ${w.documents.length ? panel('Documents on FactPages', table([['Type', (r) => esc(r.type)], ['Name', (r) => `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name)}</a>`]], w.documents, 240)) : ''}`
     depthChart(w)
+    if ($('wrep')) reportViewer($('wrep'), w.name)
   }
   function depthChart(w) {
     const tracks = [], data = []
@@ -543,18 +545,63 @@
       'It is the one document that says what happened in a well: rocks, logs, cores, tests, problems, how it was left. Until now it took a person hours per report to dig out; the JSON makes the whole shelf searchable.',
       'Search and question answering over every well (DISKOS-QA as the test), extracting casing, plugs and cement for P&A planning, drilling hazards for new wells, checking FactPages against the reports.')}
       ${kpis([[num(k.wellbores), 'wellbores'], [num(k.pdf), 'PDF reports'], [num(k.json), 'JSON reports'], [`${num(k.pdf_gb, 0)} GB`, 'of PDFs'], [`${num(k.median_mb, 0)} MB`, 'median PDF'], [num(k.in_factpages), 'wellbores found in FactPages']])}
-      ${u ? kpis([[num(u.json_files), 'JSON files unpacked'], [num(u.pdf_files), 'PDF files unpacked'], [num(u.sampled), 'sampled for the structure below']]) : `<div class="callout warn">The 112 GB archive is still downloading or not yet unpacked, so this page shows the metadata only. Once unpacked, rerun <code>uv run python -m sketches.atlas completion</code> to add the JSON structure.</div>`}
+      ${u ? kpis([[num(u.json_files), 'JSON reports unpacked'], [`~${num(u.pages_est)}`, 'pages in all (estimated)'], [num(u.median_pages), 'pages in a median report'], [`${num(u.table_share, 0)} %`, 'of pages hold a table'], [`${num(u.figure_share, 0)} %`, 'of pages hold a figure'], [num(u.wellbore_folders), 'wellbore folders']]) : `<div class="callout warn">The 112 GB archive is still downloading or not yet unpacked, so this page shows the metadata only. Once unpacked, rerun <code>uv run python -m sketches.atlas completion</code>.</div>`}
+      ${u ? panel('Read a report', `<div class="row end"><label class="field grow">Wellbore<input id="rq" placeholder="e.g. 15/9-F-5, 30/9-12, 1/2-1" /></label><button class="btn" id="rgo">Open its reports</button></div><div class="chips" style="margin-top:.6rem">${['15/9-F-5', '30/9-12', '35/4-1', '16/10-1', '25/9-1'].map((w) => `<button class="chip" data-w="${w}">${w}</button>`).join('')}</div><div id="rview"></div>`, 'each JSON report is a list of pages. Every page has the OCR text as markdown (tables as markdown tables), an AI summary with tags and figure descriptions, and a quality grade. Click a page to read it; the PDF link opens the scan at that page.') : ''}
+      ${u ? `<div class="grid g2">${panel('Page quality', chart('c-q', 280), `the pipeline grades every page. Reliable: clean text. Acceptable: usable with some errors. Uncertain: poor scan. Figure-dominated: mostly a plot or diagram. From ${num(u.pages_sampled)} pages in ${num(u.sampled)} sampled reports.`)}
+        ${panel('What the layout model found', chart('c-el', 280), 'blocks on the pages by type. Tables are everywhere: casing, mud, tests, surveys, core analyses.')}</div>
+      <div class="grid g2">${panel('What the pages are about', chart('c-tags', 560), 'the AI tags most often attached to pages. Drilling, casing and cementing dominate: these reports are first of all records of how the hole was made.')}
+        <div class="stack">${panel('Pages per report', chart('c-pages', 250))}${panel('Share of reliable pages per report', chart('c-rel', 230), 'most reports are mostly clean; a tail of poor scans needs care.')}</div></div>
+      ${panel('Sample pages', (u.samples || []).map((x) => `<div class="qa"><div class="row"><span class="tag">${esc(x.wellbore)}</span><span class="tag">page ${x.page}</span><span class="tag">${esc(x.quality)}</span>${x.tags.slice(0, 5).map((t) => `<span class="tag blue">${esc(t)}</span>`).join('')}</div><div class="a" style="margin-top:.4rem">${esc(x.summary)}</div><details><summary>The text</summary><div class="sample">${esc(x.text)}</div></details></div>`).join(''))}` : ''}
       <div class="grid g2">${panel('Wellbores by type', chart('c-type', 280), 'exploration wellbores look for oil and gas; development wellbores produce or inject on a field.')}${panel('Wellbores by decade drilled', chart('c-dec', 280), 'from the FactPages spud date. Most reports are from wells drilled in the 1990s and 2000s; few after 2010, since reports are released only after a confidentiality period.')}</div>
       <div class="grid g2">${panel('Who delivered the reports', chart('c-comp', 420), 'the operator that wrote the report. Statoil and Norsk Hydro appear under their old names.')}
         ${panel('PDF size', chart('c-size', 420), 'megabytes, log scale. Big files are long scanned reports with log plots and enclosures.')}</div>
-      ${u && u.top_keys.length ? panel('What a JSON report contains', `${table([['Top-level key', (r) => `<span class="mono">${esc(r.k)}</span>`], ['Files with it', (r) => num(r.n), 'num']], u.top_keys, 300)}<div class="row" style="margin-top:.8rem"><input id="rq" placeholder="Wellbore, e.g. 1/2-1" /><button class="btn ghost" id="rgo">Show its JSON</button></div><pre id="rout" class="sample" style="max-height:420px" hidden></pre>`, 'the keys found in a sample of files.') : ''}
       ${panel('The metadata columns', table([['Column', (r) => `<span class="mono">${esc(r.k)}</span>`], ['Example', (r) => `<span class="muted">${esc(r.example)}</span>`]], p.columns, 420), 'one row per file. Wellbore Name joins to everything else; FolderFileName is the file inside the archive.')}
       ${terms(['completion_report', 'wellbore', 'exploration', 'development', 'ocr', 'diskos', 'casing', 'core', 'dst', 'pa'])}`
     plot('c-type', [bar(p.types, { h: true })], { margin: { l: 120, r: 10, t: 10, b: 40 } })
     plot('c-dec', [bar(p.decade, { color: S(3) })])
     plot('c-comp', [bar(p.companies, { h: true, color: S(1) })], { yaxis: { autorange: 'reversed', tickfont: { size: 10 } }, margin: { l: 200, r: 10, t: 10, b: 40 } })
     plot('c-size', [histo(p.size, S(7))], { xaxis: { type: 'log', title: { text: 'MB' } } })
-    if ($('rgo')) $('rgo').onclick = async () => { const r = await get(`api/report/${encodeURIComponent($('rq').value.trim())}`).catch((e) => ({ preview: e.message })); $('rout').hidden = false; $('rout').textContent = r.preview }
+    if (u) {
+      plot('c-q', [bar(u.quality, { h: true, color: S(3) })], { yaxis: { autorange: 'reversed' }, margin: { l: 130, r: 10, t: 10, b: 40 } })
+      plot('c-el', [bar(u.elements, { h: true, color: S(1) })], { yaxis: { autorange: 'reversed' }, xaxis: { type: 'log' }, margin: { l: 130, r: 10, t: 10, b: 40 } })
+      plot('c-tags', [bar(u.tags, { h: true, color: S(7) })], { yaxis: { autorange: 'reversed', tickfont: { size: 10 } }, margin: { l: 130, r: 10, t: 10, b: 40 } })
+      plot('c-pages', [histo(u.pages, S(1))], { xaxis: { title: { text: 'pages' } } })
+      plot('c-rel', [histo(u.reliable, S(3))], { xaxis: { title: { text: '% reliable pages' } } })
+      const open = (w) => { $('rq').value = w; reportViewer($('rview'), w) }
+      $('rgo').onclick = () => open($('rq').value.trim())
+      $('rq').onkeydown = (e) => { if (e.key === 'Enter') open($('rq').value.trim()) }
+      for (const c of view.querySelectorAll('.chip[data-w]')) c.onclick = () => open(c.dataset.w)
+    }
+  }
+
+  // a wellbore's structured reports: pick a report, scan its page summaries, read a page in full
+  async function reportViewer(el, w) {
+    if (!w) return
+    el.innerHTML = '<p><span class="thinking"><span class="spin"></span>Reading the reports</span></p>'
+    const d = await get(`api/reports/${encodeURIComponent(w)}`).catch((e) => ({ error: e.message }))
+    if (d.error) { el.innerHTML = `<div class="callout err" style="margin-top:.8rem">${esc(d.error)}</div>`; return }
+    let ri = 0
+    const QC = { Reliable: 'green', Acceptable: 'blue', Uncertain: 'amber', 'Figure-dominated': '' }
+    const draw = () => {
+      const r = d.reports[ri], pdfUrl = r.pdf ? `api/pdf/${encodeURIComponent(d.folder)}/${encodeURIComponent(r.pdf)}` : ''
+      el.innerHTML = `<div style="margin-top:1rem">${d.reports.length > 1 ? `<div class="seg" id="rsel" style="margin-bottom:.7rem">${d.reports.map((x, i) => `<button class="${i === ri ? 'on' : ''}" data-i="${i}">${esc(x.title || x.file)}</button>`).join('')}</div>` : ''}
+        <div class="row"><b>${esc(r.title || r.file)}</b><span class="muted small">${r.pages.length} pages · released ${esc((r.released || '').slice(0, 10))}</span>${pdfUrl ? `<a class="btn ghost" href="${pdfUrl}" target="_blank" rel="noopener">Open the PDF</a>` : ''}</div>
+        <p class="muted small">${esc(r.quality || '')}</p>
+        <div class="split" style="margin-top:.6rem"><div class="table-wrap" style="max-height:560px">${table([['Page', (p) => num(p.n), 'num'], ['Quality', (p) => `<span class="tag ${QC[p.quality] || ''}">${esc(p.quality || '')}</span>`], ['Summary', (p) => `<span style="white-space:normal">${esc(p.summary || '')}</span>`], ['', (p) => (p.tables ? '<span class="tag">table</span>' : '') + (p.figures ? ' <span class="tag">figure</span>' : '')]], r.pages, 560).replace(/<tr>/g, '<tr class="pg">')}</div>
+        <div id="rpage"><div class="empty">Click a page to read it.</div></div></div></div>`
+      if ($('rsel')) $('rsel').onclick = (e) => { const b = e.target.closest('button'); if (b) { ri = +b.dataset.i; draw() } }
+      el.querySelectorAll('tbody tr').forEach((tr, i) => { tr.style.cursor = 'pointer'; tr.onclick = () => { el.querySelectorAll('tbody tr').forEach((x) => x.classList.remove('sel')); tr.classList.add('sel'); page(r, r.pages[i].n, pdfUrl) } })
+    }
+    const page = async (r, n, pdfUrl) => {
+      $('rpage').innerHTML = '<span class="thinking"><span class="spin"></span>Loading</span>'
+      const p = await get(`api/page/${encodeURIComponent(w)}?file=${encodeURIComponent(r.file)}&n=${n}`).catch((e) => ({ error: e.message }))
+      if (p.error) { $('rpage').innerHTML = `<div class="callout err">${esc(p.error)}</div>`; return }
+      $('rpage').innerHTML = `<div class="row"><b>Page ${n}</b><span class="tag">${esc(p.quality || '')}</span>${(p.ai.tags || []).map((t) => `<span class="tag blue">${esc(t)}</span>`).join('')}${pdfUrl ? `<a href="${pdfUrl}#page=${n + 1}" target="_blank" rel="noopener" class="small">scan of this page</a>` : ''}</div>
+        <p class="a">${esc(p.ai.page_summary || '')}</p>${(p.ai.figure_details || []).map((f) => `<p class="muted small">${esc(f)}</p>`).join('')}
+        <div class="sample" style="max-height:440px">${esc(p.markdown)}</div>
+        <p class="muted small">Layout blocks: ${Object.entries(p.elements || {}).map(([k_, v]) => `${esc(k_)} ${v}`).join(' · ')}</p>`
+    }
+    draw()
   }
 
   // ---------- seismic ----------

@@ -38,7 +38,7 @@ About 125 GB in `data/`, not in git. Everything is public. The datasets the orga
 
 | Folder | Dataset | Size | Fetch |
 |---|---|---|---|
-| `completion_reports/` | 4,462 NCS wellbore completion reports, PDF and JSON, plus Diskos metadata ([24320092](https://doi.org/10.5281/zenodo.24320092)) | 112 GB, unpacked from four tar parts | `fetch_data.py completion` |
+| `completion_reports/` | 4,462 NCS wellbore completion reports, PDF and JSON (page text as markdown, AI page summaries and tags, quality grades), plus Diskos metadata ([24320092](https://doi.org/10.5281/zenodo.24320092)) | 120 GB unpacked, one folder per wellbore | `fetch_data.py completion` |
 | `text/` | OCR text of Norwegian (Diskos, relinquishment), UK and Dutch reports, page by page, with 1,368 hand-labelled pages ([10775273](https://zenodo.org/records/10775273)) | 6.1 GB | `fetch_data.py text` |
 | `realpore/` | Core porosity, permeability and rock type, 372,930 plugs from 1,240 wells; credit GeoProvider, http://geoprovider.no/ ([4723018](https://zenodo.org/records/4723018)) | 45 MB | `fetch_data.py realpore` |
 | `force2020/` | FORCE 2020 wells as LAS, casing depths and lithostratigraphy sheets ([4351156](https://zenodo.org/records/4351156)) | 170 MB | `fetch_data.py force2020_las` |

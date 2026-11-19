@@ -153,12 +153,57 @@ partly searchable.
 - `FolderFileName`: the file inside the archive.
 - `DISKOS Info Item Id`: the id in Diskos.
 
+**On disk.** Unpacked, it is one folder per wellbore, named with `_` for `/` and for spaces (`30_9-12`,
+`34_8-A-5_BH`). Each folder holds `WELL/`, with each report as a PDF and a JSON side by side. 4,441 wellbore
+folders, 5,326 JSON and 5,452 PDF files, 120 GB.
+
+**Inside a JSON report.** It is wrapped as `{archive path: {...}}`. Inside are two parts:
+- `original_document_metadata`:
+  - the Diskos fields (`wellboreName`, `wellboreId`, `releaseDate`, `title`, ids);
+  - `document_quality`, a sentence such as "excellent quality: 77 % of pages reliable";
+  - `page_quality_summary`: counts of reliable, acceptable, uncertain and figure-dominated pages.
+- `pages`: one entry per page, with:
+  - `page_no`;
+  - `page_metadata`: size, an image quality score, and a **quality** grade (Reliable, Acceptable, Uncertain,
+    Figure-dominated);
+  - `OCR.ocr_markdown`: the page text as markdown, **with tables as markdown tables**;
+  - `OCR.layout.elements`: the blocks a layout model found, each with a type (plain text, title, table, table
+    caption, figure, figure caption, formula) and its bounding box and confidence;
+  - `AI`: `page_summary`, one or two sentences; `tags`; `has_tables` and `has_figures`; and `figure_details`, a
+    description of each figure.
+
+**What is in them** (from 600 sampled reports, 76,472 pages):
+- About 679,000 pages in all, a median of 107 per report.
+- 67 % of pages hold a table and 33 % a figure.
+- Page quality: 63 % reliable, 28 % acceptable, 5 % figure-dominated, 4 % uncertain.
+- The most common tags:
+
+  | Tag | Pages | Tag | Pages |
+  |---|---|---|---|
+  | drilling | 17,525 | casing | 8,832 |
+  | well log | 8,792 | lithology | 8,582 |
+  | completion | 6,690 | cementing | 6,508 |
+  | MWD | 4,923 | BHA | 3,968 |
+  | core description | 3,713 | porosity | 3,218 |
+  | stratigraphy | 3,038 | pressure test | 2,851 |
+  | daily report | 2,253 | mud weight | 2,047 |
+  | downtime | 1,809 | | |
+
+**Two discoveries in the contents.**
+- **Daily drilling reports.** The reports carry daily drilling reports for many wells: 2,253 tagged pages in a
+  sample of 600 reports, so roughly 20,000 shelf-wide. Lost-time analysis is no longer limited to Volve's 26
+  wellbores.
+- **Well schematics.** They contain casing tallies and well schematics, with hole sizes, casing strings,
+  **TOC** (top of cement) and shoe depths. That is the raw material for P&A and CO2 legacy-well barrier dossiers,
+  the "machine-readable P&A database" the literature says does not exist.
+
 **Quirks.**
 - Few reports are from after 2010, because reports are released only after a confidentiality period.
 - Company names are historical. Statoil, Norsk Hydro, StatoilHydro and Equinor are the same lineage.
-- Scanned reports have OCR errors.
-- The layout of each JSON can only be described once the archive is unpacked. The Atlas rebuilds that part
-  automatically when the download finishes.
+- Quality varies within a wellbore. 15/9-F-5's main report is 76 % acceptable or better, but its second report is
+  88 % uncertain.
+- The AI summaries and tags were written by models. They are excellent for finding pages, but should be checked
+  against the page text before being cited as fact.
 
 **Good for.**
 - Search and question answering over every well, with DISKOS-QA as the test.
@@ -687,6 +732,9 @@ position and a time-depth tie.
   against 42 % chance.
 - **Lost time at Volve:** 21.7 % of rig hours are reported NPT, and about 5 % more is invisible, in drilling
   slower than the 75th-percentile rate for the depth.
+- **The completion reports are richer than the old OCR corpus.** They have page-level summaries, tags, quality
+  grades and tables kept as tables, and they include daily drilling reports and well schematics for many wells.
+  They should replace the Diskos OCR text as the search corpus.
 - **Data consistency:** only 24 of 108 FORCE 2020 wells agree fully with FactPages on position, depth reference
   and formation tops.
 - **Tie-backs:** 92 undeveloped discoveries with 499 MSm³ o.e. are within reach of producing hosts.
