@@ -108,6 +108,26 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     ok("the low end can never reach the high end", Number($("#cmin").value) < Number($("#cmax").value), `from ${$("#cmin").value} to ${$("#cmax").value}`);
     $("#cmin").value = 0; $("#cmin").dispatchEvent(new Event("input", { bubbles: true }));
     $("#pal").value = "blue"; $("#pal").dispatchEvent(new Event("change", { bubbles: true })); $("#cmax").value = 0.2; $("#cmax").dispatchEvent(new Event("input", { bubbles: true })); $("#cmin").value = 0; $("#cmin").dispatchEvent(new Event("input", { bubbles: true })); await sleep(800);
+    // --- colour key as a filter
+    F().location.hash = "scene"; await waitFor(() => $("#p3") && $("#p3").data && $("#keybody [data-c]"), 90000); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(800);
+    const sticks = () => $("#p3").data.filter((d) => d.meta && typeof d.meta === "object" && "cls" in d.meta), rowOf = (b) => D().querySelector(`#keybody [data-c="${b}"]`), vis = (d) => d.visible !== false;
+    const pick = sticks().map((d) => d.meta.cls).filter((c) => c >= 1)[0];
+    ok("key rows offer a checkbox, swatch, name, count and an 'only' link", D().querySelectorAll("#keybody [data-c]").length === 5 && [...D().querySelectorAll("#keybody [data-c]")].every((r) => r.querySelector("input") && r.querySelector("[data-only]") && r.querySelectorAll("td").length >= 5), "");
+    const cnt0 = rowOf(pick).querySelectorAll("td")[3].textContent; rowOf(pick).click(); await sleep(500);
+    ok("clicking a class hides its sticks and unchecks it, counts stay", sticks().filter((d) => d.meta.cls === pick).every((d) => !vis(d)) && !rowOf(pick).querySelector("input").checked && rowOf(pick).querySelectorAll("td")[3].textContent === cnt0, "class " + pick + ", count " + cnt0);
+    rowOf(pick).click(); await sleep(500); ok("clicking again shows it", sticks().every(vis) && rowOf(pick).querySelector("input").checked);
+    rowOf(pick).querySelector("[data-only]").click(); await sleep(500);
+    ok("'only' shows just that class", sticks().every((d) => (d.meta.cls === pick) === vis(d)) && D().querySelectorAll("#keybody [data-c] input:checked").length === 1);
+    rowOf(pick).querySelector("[data-only]").click(); await sleep(500); ok("'only' again restores all", sticks().every(vis));
+    D().querySelector('#keybody [data-all="0"]').click(); await sleep(400); const noneOk = sticks().every((d) => !vis(d)); D().querySelector('#keybody [data-all="1"]').click(); await sleep(400);
+    ok("none hides every class, all shows them again", noneOk && sticks().every(vis));
+    rowOf(pick).dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); await sleep(400);
+    ok("hovering a class row fades the other classes", sticks().every((d) => (d.meta.cls === pick ? d.opacity === 1 || d.opacity == null : d.opacity === 0.1)), "");
+    $("#keybody").dispatchEvent(new MouseEvent("mouseleave")); await sleep(400); ok("and leaving restores them", sticks().every((d) => d.opacity === 1 || d.opacity == null));
+    const boxes = () => $("#p3").data.filter((d) => d.type === "mesh3d" && /higher than/.test(d.text || "")).length, hotCb = D().querySelector('#keybody [data-k="hot"]'), nBox0 = boxes();
+    hotCb.click(); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
+    ok("unticking 'higher' removes the orange boxes and their list entries", nBox0 > 0 && boxes() === 0 && ![...D().querySelectorAll("#hs .hs")].some((e) => /higher than usual/i.test(e.textContent)), `${nBox0} -> ${boxes()} boxes`);
+    D().querySelector('#keybody [data-k="hot"]').click(); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
     // --- depth stretch acts at every position
     const az = () => $("#p3")._fullLayout.scene.aspectratio.z, setEx = async (v) => { $("#ex").value = v; $("#ex").dispatchEvent(new Event("input", { bubbles: true })); await sleep(700); };
     await setEx(2); const z2 = az(); await setEx(4); const z4 = az(); await setEx(8); const z8 = az(); await setEx(30); const z30 = az(); await setEx(12);

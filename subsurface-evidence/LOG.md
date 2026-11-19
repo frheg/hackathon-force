@@ -265,3 +265,9 @@ Status tags: `[done]` `[open]` `[wrong]` (kept, never deleted: a wrong turn is d
 - **Jitter, causes found** (1) Axis ranges were automatic, so toggling the coast, seismic or sheets changed the data bounds and rescaled the whole scene; now fixed from the chosen formations. (2) A redraw could reset or snap the camera; now the live camera is read back and passed again, only a new region starts from the default. (3) A second redraw fired right after load (resize observer's first call); skipped. (4) Plotly's resize of a WebGL scene threw "axis scaling" and left a stale canvas; 3D scenes are now redrawn at an explicit container size instead of resized. (5) A hidden (folded) plot is not touched.
 - **Verified in real time** (DevTools protocol, 13 interaction steps: inspector, sliders, folding, collapsing both sidebars, colour range, views): 0 exceptions, plot width follows its container. The virtual-time test harness still logs a few Plotly "axis scaling" lines, which are an artefact of its clock; none occur in the real-time probe.
 - **Tests** 68 browser checks (all PASS), 17 backend tests.
+
+## L043 Colour key as a filter [done]
+- **Why** With thousands of sticks in a few colours, a class is hard to find on the map. The key now filters.
+- **What** Each stick class row has a checkbox (show or hide that class), an "only" link (isolate it; again restores all), and "all" / "none". Hovering a row fades the other classes so the hovered one stands out. The higher (orange) and lower (purple) area colours have checkboxes too; unticking one removes those boxes and their list entries (numbering stays consistent). Counts in the key do not change when a class is hidden.
+- **How** Stick traces carry their class (`meta.cls`); show, hide and fade use `Plotly.restyle` (no redraw, no scene change, camera untouched). Class visibility is kept across redraws.
+- **Tests** 77 browser checks, all PASS (11 new for the key).
