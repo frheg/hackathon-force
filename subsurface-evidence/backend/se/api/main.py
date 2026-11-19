@@ -11,10 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from se.api.state import State
 from se.config import LOG_MD, PROJECT, TARGET, WORKER_URL
 from se.infer.combine import ORDER
+from se.api import explore, scene
 from se.jobs import map_job
 
 app = FastAPI(title="subsurface-evidence", root_path=os.environ.get("ROOT_PATH", ""), docs_url="/api/docs", openapi_url="/api/openapi.json")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"])
+app.include_router(explore.router)
 S: State | None = None
 
 
@@ -182,3 +184,30 @@ def docs_list():
     for p in sorted((PROJECT / "docs").glob("*.md")):
         out.append({"name": p.stem, "markdown": p.read_text()})
     return out
+
+
+@app.get("/api/formations3d")
+def formations3d():
+    s = st()
+    g = s.lab.groupby("name").agg(units=("label", "size"), wells=("wellbore", "nunique")).reset_index()
+    return g[g.units >= 8].sort_values("units", ascending=False).to_dict("records")
+
+
+@app.get("/api/scene")
+def scene_(formations: str, surfaces: bool = True, lat_min: float = 0.0, lat_max: float = 90.0):
+    """Wells (segments per unit) and smoothed surfaces for the chosen formations, plus the hotspots found in them."""
+    s = st()
+    fs = [f for f in formations.split(",") if f][:8]
+    u = s.units[s.units.name.isin(fs) & s.units.lat.between(lat_min, lat_max)]
+    if not hasattr(s, "_hot"):
+        s._hot = scene.hotspots(s)
+    return clean({"formations": fs, "wells": scene.wells(u), "surfaces": [x for x in (scene.surface(s, f, lat_min, lat_max) for f in fs) if x] if surfaces else [],
+                  "hotspots": [h for h in s._hot if h["formation"] in fs and lat_min <= h["lat"] <= lat_max], "frame": {"lat0": scene.LAT0, "lon0": scene.LON0}, "units_total": int(len(u)), "units_shown": int(min(len(u), 4000))})
+
+
+@app.get("/api/hotspots")
+def hotspots_():
+    s = st()
+    if not hasattr(s, "_hot"):
+        s._hot = scene.hotspots(s)
+    return clean(s._hot)

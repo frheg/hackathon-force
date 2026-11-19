@@ -156,3 +156,23 @@ Status tags: `[done]` `[open]` `[wrong]` (kept, never deleted: a wrong turn is d
 - **Checked** UI pages screenshotted in headless Chromium; the map overlay bug (added before the map had a view) found and fixed.
 - **Not done** Cluster deploy: `deploy/subsurface-evidence.yaml` is a draft. Open: GPU image with torch, gpuproxy, NetworkPolicy for backend->worker, profctl/panel tile. Needs the owner's go-ahead.
 - **Ports** 8300/8301 are in use on kratos; this project uses 8460/8461/8462.
+
+## L027 Scope widened: supertool [decided by user]
+- **Ask** (user): "more interactive, not only green clay specific ... a supertool squeezing out all information from all data we have" and "run me through what the data is".
+- **Choices (user, via question)** Direction: target builder + explorer. Data to squeeze, all four: report text (all facts), FactPages (all tables), seismic as a layer, DiskosQA search.
+- **Inventory (measured 2026-11-19)** Completion reports 4,462 PDFs, 112 GB, text 5.7 GB (used: green words only). FactPages 22 tables (used: tops + positions). FORCE 2020 logs 106 wells, 28 cols (used: log layer, hurt). Seismic F3, Penobscot, Parihaka, FaultSeg3D, ADELE 8.6 GB (unused, no cube over our wells). DiskosQA 12 MB (unused). RealPore, KSAT, Volve: unused.
+- **Plan (phases, each logged and tested)**
+  1. Data catalog + table explorer with cross-filter (this entry). Structured, no model.
+  2. Target builder on structured data: pick a table + condition -> per-unit counts -> same engine, validation and explanations.
+  3. Report text facts: keep the TEXT of description rows (descriptions.parquet has only flags now), so any keyword or fact is a target. Needs a re-extraction; the one used for green clay did not store text.
+  4. Seismic layer: only for wells inside a cube. None of ours are (F3 is Dutch sector); decision needed on which cube/area.
+  5. DiskosQA search next to the evidence.
+- **Constraint** The engine models a share (successes / trials) per unit. Continuous targets (porosity, mud weight) need another likelihood: a new Target type, not a rewrite.
+
+## L028 UI redesign, 3D explorer, hotspots, data explorer [done, phase 1 of L027]
+- **UI** Rebuilt: design tokens, dark/light, icon rail, a "what you are looking at" box on every page, Plotly charts instead of JSON (validation, evidence waterfall, layer weights).
+- **3D explorer** Wells as vertical segments (MD, not TVD), per-formation estimate sheets (kernel-smoothed depth, masked beyond 60 km), hotspot boxes, region filter (the shelf spans 58 to 74 N, so all-shelf is unreadable).
+- **Hotspots** 20 km windows vs formation rate. Plain binomial gave p about 1e-20 (rows in one unit are correlated): scaled by Pearson dispersion phi (1 to 5.5) and Bonferroni over windows. Result: 4 of 16 survive (adj p < 0.05); several are on wells described 1.5 to 2x more than average (reporting effort), and the text says so. Exploratory, not a prediction (the spatial layer showed no out-of-sample gain, L022).
+- **Data explorer** Catalog with origin of every dataset; any FactPages table: columns profile, rows, chart (click bar = filter), map.
+- **Not tested in a browser** Explorer clicks (table pick, bar-click filter); the API calls behind them were tested with curl. Fine-map button against a live GPU worker.
+- **Bug** Plotly cdnjs URL 404 (wrong path); moved to jsdelivr `plotly.js-dist-min@2.35.2`.
