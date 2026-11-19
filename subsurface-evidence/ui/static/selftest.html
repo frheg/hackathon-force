@@ -29,13 +29,89 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     $('[data-pr="0"]').click(); await sleep(400);
     $("#go").click(); ok("build finishes and shows the result", !!(await waitFor(() => /done in/.test($("#gs").textContent) && $("#res").textContent.includes("Result"), 150000)), $("#gs").textContent);
     ok("result has gains", /Formation/.test($("#res").textContent), $("#res").textContent.replace(/\s+/g, " ").slice(0, 160));
+    // --- report-text targets
+    F().location.hash = "targets"; await waitFor(() => $("[data-pr]")); const tp = [...D().querySelectorAll("[data-pr]")].findIndex((b) => /Pyrite/.test(b.textContent));
+    D().querySelector(`[data-pr="${tp}"]`).click(); await sleep(500);
+    ok("text preset fills keywords and rock types", $("#kw") && /pyrite/.test($("#kw").value) && D().querySelectorAll("[data-lith]:checked").length === 3, $("#kw") ? $("#kw").value : "no #kw");
+    $("#pvw").click(); ok("preview lists matching report lines with their source", !!(await waitFor(() => D().querySelectorAll("#pvr table tr").length >= 5, 30000)), ($("#pvr p") || {}).textContent);
+    $("#go").click(); ok("text target builds", !!(await waitFor(() => /done in/.test($("#gs").textContent) && /Result/.test($("#res").textContent), 150000)), $("#gs").textContent);
     // --- use target, then the pages that depend on it
     $("#useit").click(); await waitFor(() => F().location.hash === "#validation"); ok("'open this target' goes to validation", !!(await waitFor(() => $("#v1 .main-svg"), 30000)));
     F().location.hash = "units"; ok("units page works on the new target", !!(await waitFor(() => D().querySelectorAll("#t tr.click").length > 10, 30000)), D().querySelectorAll("#t tr.click").length + " rows");
     D().querySelector("#t tr.click").click(); ok("unit page explains the estimate", !!(await waitFor(() => $("#wf .main-svg"), 30000)), ($("table td:nth-child(3)") || {}).textContent);
-    F().location.hash = "map"; ok("map page works on the new target", !!(await waitFor(() => D().querySelectorAll("#map .leaflet-interactive").length > 20, 40000)));
     F().location.hash = "scene"; ok("3D page works on the new target", !!(await waitFor(() => $("#p3 .main-svg, #p3 canvas") && $("#hs").textContent.length > 5, 60000)));
-    F().localStorage.setItem("target", "green_clay");
+    // --- interaction tweaks: camera kept, hover highlight, panes, loading indicator, map view kept
+    F().localStorage.setItem("target", "green_clay"); F().localStorage.removeItem("pane:sc-hs"); Object.keys(F().localStorage).filter((k) => k.startsWith("geo:")).forEach((k) => F().localStorage.removeItem(k));
+    F().location.reload(); await sleep(1500); F().location.hash = "scene";
+    await waitFor(() => $("#p3") && $("#p3").data && $("#p3").data.length > 3 && D().querySelector(".hs"), 90000);
+    const g3 = $("#p3"); ok("3D: unusual areas listed and numbered", /#1 /.test($(".hs b").textContent), $(".hs b").textContent);
+    const mb = D().querySelector(".modebar-container"), pn = D().querySelector("#pane-sc-hs"), r1 = mb.getBoundingClientRect(), r2 = pn.getBoundingClientRect();
+    ok("3D: the areas pane does not cover the plot toolbar", r2.top >= r1.bottom - 1 || r2.left >= r1.right || r2.right <= r1.left, `toolbar bottom ${Math.round(r1.bottom)}, pane top ${Math.round(r2.top)}`);
+    ok("panes are resizable", F().getComputedStyle(pn).resize !== "none");
+    const rc = D().querySelector("#pane-sc-ctl").getBoundingClientRect(), rk = D().querySelector("#pane-sc-key").getBoundingClientRect();
+    ok("left panes stack without covering each other", rc.bottom <= rk.top + 1, `controls bottom ${Math.round(rc.bottom)}, key top ${Math.round(rk.top)}`);
+    await F().Plotly.relayout(g3, { "scene.camera": { eye: { x: 0.31, y: -0.42, z: 0.23 } } }); await sleep(500);
+    $("#cs").click(); await waitFor(() => D().body.classList.contains("busy") === false, 60000); await sleep(1500);
+    const eye = g3._fullLayout.scene.camera.eye; ok("3D: camera unchanged after a refresh", Math.abs(eye.x - 0.31) < 0.02 && Math.abs(eye.y + 0.42) < 0.02, JSON.stringify(eye));
+    $("#cs").click(); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(800);  // sheets back on for the later checks
+    F().eval('track("slow test request", new Promise((r) => setTimeout(r, 1500)))'); await sleep(700);
+    ok("loading indicator shows while a request runs", D().body.classList.contains("busy") && /Working: slow test request/.test($("#busy").textContent) && D().querySelector("#wait").style.display !== "none", $("#busy").textContent.slice(0, 50));
+    await sleep(1500); ok("loading indicator clears when it is done", !D().body.classList.contains("busy") && $("#busy").textContent === "");
+    const item = D().querySelector(".hs"), id = item.dataset.h; item.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); await sleep(500);
+    ok("hover list item: item and its box light up", item.classList.contains("hov") && g3.data.some((d) => d.type === "mesh3d" && d.meta === id && d.opacity > 0.5) && g3.data.some((d) => d.type === "mesh3d" && d.meta !== id && d.opacity < 0.1), "");
+    item.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: D().body })); $("#hs").dispatchEvent(new MouseEvent("mouseleave")); await sleep(500);
+    ok("hover off restores the boxes", !item.classList.contains("hov") && g3.data.filter((d) => d.type === "mesh3d").every((d) => d.opacity >= 0.19));
+    g3.emit("plotly_hover", { points: [{ data: { meta: id } }] }); await sleep(300); ok("hover a box in 3D: its list item lights up", item.classList.contains("hov")); g3.emit("plotly_unhover", {});
+    // --- seismic context
+    F().location.hash = "scene"; await waitFor(() => $("#sv-id") && $("#p3") && $("#p3").data && $("#p3").data.length > 3, 90000);
+    ok("seismic pane lists the indexed surveys", $("#sv-id").options.length >= 3, $("#sv-id").options.length - 1 + " surveys");
+    ok("survey outlines are drawn (one per site)", $("#p3").data.filter((d) => d.type === "scatter3d" && d.mode === "lines" && d.hoverinfo === "text" && /open seismic|wells inside/.test((d.text || [""])[0])).length >= 2);
+    $("#sv-id").value = "gn1101"; $("#sv-id").dispatchEvent(new Event("change", { bubbles: true }));
+    ok("choosing a survey draws a seismic curtain", !!(await waitFor(() => $("#p3").data.some((d) => d.type === "surface" && d.name === "gn1101"), 60000)));
+    const cam0 = JSON.stringify($("#p3")._fullLayout.scene.camera.eye); $("#sv-fly").click(); await sleep(800);
+    ok("fly to survey moves the camera", JSON.stringify($("#p3")._fullLayout.scene.camera.eye) !== cam0);
+    $("#ref").value = "bed"; $("#ref").dispatchEvent(new Event("change", { bubbles: true })); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(800);
+    ok("seabed reference hides the curtain and says why", !$("#p3").data.some((d) => d.type === "surface" && d.name === "gn1101") && /Switch the depth reference/.test($("#svnote").textContent));
+    $("#ref").value = "sea"; $("#ref").dispatchEvent(new Event("change", { bubbles: true })); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(800);
+    // --- hover wording says what the numbers are
+    F().location.hash = "scene"; await waitFor(() => $("#p3") && $("#p3").data && $("#p3").data.length > 3, 90000);
+    const wt = $("#p3").data.find((d) => d.type === "scatter3d" && d.mode === "lines" && (d.text || [""])[0].includes("Observed:"));
+    ok("stick hover states the interval, the counts and what they count", !!wt && /Interval .* below/.test(wt.text[0]) && /Observed: <b>\d+ of \d+<\/b> .*(name a green mineral|described)/.test(wt.text[0]), wt ? wt.text[0].replace(/<[^>]*>/g, " ").slice(0, 150) : "none");
+    const sf = $("#p3").data.find((d) => d.type === "surface" && /Model estimate/.test(d.hovertemplate || ""));
+    ok("sheet hover says it is a model estimate, not an observation", !!sf && /not an observation/.test(sf.hovertemplate), sf ? sf.hovertemplate.replace(/<[^>]*>/g, " ").slice(0, 140) : "none");
+    ok("box hover leads with what the box is", $("#p3").data.some((d) => d.type === "mesh3d" && /Area #\d+: (higher|lower) than the .* average/.test(d.text || "")));
+    ok("area list says the share, the count and the comparison", /of \d+ .* vs .*across/.test($(".hs").textContent.replace(/\s+/g, " ")), $(".hs p").textContent.slice(0, 120));
+    // --- colour picker and key
+    F().location.hash = "scene"; await waitFor(() => $("#p3") && $("#p3").data && $("#p3").data.length > 3 && $("#keybody") && $("#pal"), 90000);
+    ok("colour key explains a stick and lists the classes with counts", /one well's interval inside one formation/.test($("#keybody").textContent) && D().querySelectorAll("#keybody table tr").length === 5, D().querySelectorAll("#keybody table tr").length + " classes");
+    $("#pal").value = "viridis"; $("#pal").dispatchEvent(new Event("change", { bubbles: true })); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1200);
+    const sh = $("#p3").data.find((d) => d.type === "surface" && /Model estimate/.test(d.hovertemplate || ""));
+    ok("palette picker recolours the sheets", !!sh && sh.colorscale[0][1] === "#440154", sh ? JSON.stringify(sh.colorscale[0]) : "no sheet");
+    ok("palette picker recolours the sticks", $("#p3").data.some((d) => d.type === "scatter3d" && d.line && d.line.color === "#fde725") && /#fde725/.test($("#keybody").innerHTML.toLowerCase()));
+    $("#cmax").value = 0.1; $("#cmax").dispatchEvent(new Event("input", { bubbles: true })); await sleep(1500);
+    ok("colour range changes the class limits", /under 1\.0%/.test($("#keybody").textContent), $("#keybody table").textContent.replace(/\s+/g, " ").slice(0, 120));
+    $("#pal").value = "blue"; $("#pal").dispatchEvent(new Event("change", { bubbles: true })); $("#cmax").value = 0.2; $("#cmax").dispatchEvent(new Event("input", { bubbles: true })); await sleep(800);
+    // --- depth stretch acts at every position
+    const az = () => $("#p3")._fullLayout.scene.aspectratio.z, setEx = async (v) => { $("#ex").value = v; $("#ex").dispatchEvent(new Event("input", { bubbles: true })); await sleep(700); };
+    await setEx(2); const z2 = az(); await setEx(4); const z4 = az(); await setEx(8); const z8 = az(); await setEx(30); const z30 = az(); await setEx(12);
+    ok("depth stretch acts at low values (x2 -> x4 -> x8 doubles the vertical scale each time)", Math.abs(z4 / z2 - 2) < 0.1 && Math.abs(z8 / z4 - 2) < 0.1 && z30 > z8, `z ratios ${(z4 / z2).toFixed(2)}, ${(z8 / z4).toFixed(2)}, x30/x8 ${(z30 / z8).toFixed(2)}`);
+    // --- performance behaviour and the map folded into 3D
+    F().location.hash = "scene"; await waitFor(() => $("#p3") && $("#p3").data && $("#p3").data.length > 3 && $("#c-sp"), 90000); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(800);
+    const nScene = () => F().performance.getEntriesByType("resource").filter((r) => r.name.includes("api/scene")).length;
+    let n0 = nScene(); const fire = (el, t) => el.dispatchEvent(new Event(t, { bubbles: true }));
+    for (const v of [30, 40, 50, 60, 70, 80]) { $("#op").value = v; fire($("#op"), "input"); await sleep(30); } await sleep(1500);
+    ok("a slider drag (6 ticks) refetches nothing and redraws once", nScene() === n0, `${nScene() - n0} scene requests`);
+    $("#pal").value = "warm"; fire($("#pal"), "change"); await sleep(1500); ok("palette change reuses the loaded scene", nScene() === n0, `${nScene() - n0} scene requests`);
+    $("#c-sp").click(); await waitFor(() => nScene() > n0, 20000); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
+    const flat = (() => { const sh = $("#p3").data.find((d) => d.type === "surface" && /Model estimate/.test(d.hovertemplate || "")); const v = sh.surfacecolor.flat().filter((x) => x != null); return v.length && v.every((x) => Math.abs(x - v[0]) < 1e-9); })();
+    ok("neighbour switch off: each estimate sheet is flat (formation rate only)", flat);
+    $("#c-sp").click(); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
+    const cells = () => $("#p3").data.filter((d) => d.type === "surface" && /Model estimate/.test(d.hovertemplate || "")).reduce((n, d) => n + d.x.flat().length, 0), c0 = cells();
+    $("#c-res").value = "0.05"; fire($("#c-res"), "change"); await waitFor(() => cells() > c0 * 2, 60000); ok("fine estimate detail gives a much finer grid", cells() > c0 * 2, `${c0} -> ${cells()} cells`);
+    $("#c-res").value = "0.15"; fire($("#c-res"), "change"); await sleep(1500);
+    $("#v-top").click(); await sleep(800); const eyeTop = $("#p3")._fullLayout.scene.camera.eye; ok("top view looks straight down", eyeTop.z > 2 && Math.abs(eyeTop.x) < 0.1, JSON.stringify(eyeTop));
+    F().location.hash = "map"; ok("old #map address lands on the 3D page", !!(await waitFor(() => F().location.hash === "#scene" && $("#p3"), 30000)));
+    ok("the Map page is gone from the menu", ![...D().querySelectorAll("#links a")].some((a) => a.textContent === "Map"));
   } catch (e) { R.push("ERROR " + e); }
   document.getElementById("out").textContent = R.join("\n") + "\nDONE";
 })();

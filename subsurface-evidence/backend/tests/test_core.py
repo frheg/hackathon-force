@@ -119,3 +119,56 @@ def test_store_reads_both_roots_and_writes_to_the_writable_one(tmp_path, monkeyp
     monkeypatch.setattr(store, "ROOT", rw); monkeypatch.setattr(store, "ROOTS", [rw, ro])
     assert [t["id"] for t in store.saved()] == ["aaa", "bbb"]
     assert store.path("aaa") == ro / "aaa" and store.path("new") == rw / "new"
+
+
+def test_map_without_the_spatial_layer_is_json_safe_and_equals_the_formation_rate():
+    import json
+    from se.jobs import map_job
+    u = units(); s = Strat().fit(u)
+    m = map_job.run(s, u, "F", res_deg=0.2, dev="cpu", use_spatial=False)
+    json.dumps(m, allow_nan=False)  # no NaN: JSON cannot carry it
+    assert np.allclose(np.array(m["logit"]), np.array(m["logit"]).flat[0]) and np.isfinite(m["nearest_km"]).all()
+
+
+def test_ibm_float_decoding():
+    from se.seismic.index import ibm
+    v = ibm(np.array([0x42640000, 0xC276A000, 0x40800000, 0], dtype=np.uint32))  # 100.0, -118.625, 0.5, 0
+    assert np.allclose(v, [100.0, -118.625, 0.5, 0.0])
+
+
+def _write_segy(path, ns=20, fmt=5, il_xl=((1, 1), (1, 2), (2, 1), (2, 2)), scalar=-10):
+    import struct
+    hdr = bytearray(3600)
+    hdr[3216:3218] = struct.pack(">h", 4000); hdr[3220:3222] = struct.pack(">h", ns); hdr[3224:3226] = struct.pack(">h", fmt)
+    out = bytearray(hdr)
+    for k, (i, x) in enumerate(il_xl):
+        th = bytearray(240)
+        th[70:72] = struct.pack(">h", scalar); th[72:76] = struct.pack(">i", 5000000 + (k % 2) * 250); th[76:80] = struct.pack(">i", 67000000 + (k // 2) * 250)
+        th[188:192] = struct.pack(">i", i); th[192:196] = struct.pack(">i", x)
+        out += th + np.full(ns, float(k + 1), dtype=">f4").tobytes()
+    path.write_bytes(bytes(out))
+
+
+def test_segy_indexer_reads_geometry_and_amplitudes(tmp_path, monkeypatch):
+    from se.seismic import index
+    monkeypatch.setattr(index, "SEIS", tmp_path / "seis")
+    f = tmp_path / "t.sgy"; _write_segy(f)
+    m = index.build(f, "t", "Test", "test", max_traces=10, tstep=2)
+    assert m["traces_total"] == 4 and m["inline"] == [1, 2] and m["crossline"] == [1, 2] and m["samples"] == 10 and m["dt_ms"] == 8.0
+    xy = np.load(tmp_path / "seis" / "t" / "xy.npy"); assert np.allclose(xy[0], [500000.0, 6700000.0]) and np.allclose(xy[3], [500025.0, 6700025.0])  # scalar -10 divides the coordinates by 10
+    assert np.allclose(np.load(tmp_path / "seis" / "t" / "traces.npy")[:, 0], [1, 2, 3, 4])
+    assert len(m["footprint"]) >= 3 and 55 < m["centre"][0] < 62  # a plausible North Sea latitude from UTM 31N
+
+
+def test_scene_cache_and_neighbour_switch():
+    import numpy as np
+    from se.api.main import app
+    with TestClient(app) as c:
+        p = {"formations": "HORDALAND GP", "lat_min": 58, "lat_max": 62}
+        a = c.get("/api/scene", params=p).json(); b = c.get("/api/scene", params=p).json()
+        assert a == b  # second answer comes from the cache and is identical
+        off = c.get("/api/scene", params={**p, "spatial": "false"}).json()["surfaces"][0]["rate"]
+        flat = np.array([v for r in off for v in r if v is not None])
+        assert flat.size and np.allclose(flat, flat[0])  # without neighbours the sheet is the formation rate everywhere
+        fine = c.get("/api/scene", params={**p, "res": 0.05}).json()["surfaces"][0]
+        assert len(fine["x"]) > len(a["surfaces"][0]["x"]) * 2  # finer grid

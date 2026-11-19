@@ -34,7 +34,7 @@ def wells(u: pd.DataFrame, limit: int = 4000) -> list:
             for a, (x, y), t, b, c, g, o, k, d in zip(u.unit, p, u.top, u.bot, u.coverage, u.n_green, obs, u.kb, u.wd)]
 
 
-def surface(state, formation: str, lat_min: float = 0.0, lat_max: float = 90.0, res: float = 0.15, ell_z: float = 40.0, dev: str = "cpu") -> dict | None:
+def surface(state, formation: str, lat_min: float = 0.0, lat_max: float = 90.0, res: float = 0.15, ell_z: float = 40.0, dev: str = "cpu", spatial: bool = True) -> dict | None:
     s, tr = state, with_depth_ref(state.lab[(state.lab.name == formation) & state.lab.lat.between(lat_min, lat_max)])
     if len(tr) < 8:
         return None
@@ -48,8 +48,9 @@ def surface(state, formation: str, lat_min: float = 0.0, lat_max: float = 90.0, 
     t = map_job.weights(P, Q, tr.n_green.to_numpy(float), tr.coverage.to_numpy(float), sp.ell, dev)
     local = (t[:, 0] + sp.k * pf) / (t[:, 1] + sp.k)
     base = np.log(strat.p0 / (1 - strat.p0))
-    raw = base + (np.log(pf / (1 - pf)) - base) + (np.log(local / (1 - local)) - np.log(pf / (1 - pf)))
-    rate = s.platt(("strat", "spatial"))(raw)
+    use_sp = spatial  # the user's switch; the layer's tested status is shown next to it in the UI
+    raw = base + (np.log(pf / (1 - pf)) - base) + ((np.log(local / (1 - local)) - np.log(pf / (1 - pf))) if use_sp else 0.0)
+    rate = s.platt(("strat", "spatial") if use_sp else ("strat",))(raw)
     z = map_job.weights(P, Q, ((tr.top + tr.bot) / 2).to_numpy(float), np.ones(len(tr)), ell_z, dev)
     depth = np.where(z[:, 1] > 1e-6, z[:, 0] / np.maximum(z[:, 1], 1e-12), np.nan)
     sb = ((tr.top + tr.bot) / 2 - (tr.kb + tr.wd)).fillna(0).to_numpy(float)  # mid depth below the seabed: seabed = rig floor height + water depth (checked: shallowest top = kb + wd, LOG L030)

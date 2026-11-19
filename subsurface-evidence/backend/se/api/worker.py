@@ -39,5 +39,5 @@ def run_map(p: dict):
 def run_surfaces(p: dict):
     s, t0 = st(p.get("target", "green_clay")), time.time()
     dev = device()
-    out = [x for x in (scene.surface(s, f, float(p.get("lat_min", 0)), float(p.get("lat_max", 90)), dev=dev) for f in p["formations"]) if x]
+    out = [x for x in (scene.surface(s, f, float(p.get("lat_min", 0)), float(p.get("lat_max", 90)), res=float(p.get("res", 0.15)), dev=dev, spatial=bool(p.get("spatial", True))) for f in p["formations"]) if x]
     return {"surfaces": out, "device": dev, "seconds": round(time.time() - t0, 3)}

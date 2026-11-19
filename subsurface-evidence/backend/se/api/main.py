@@ -8,17 +8,20 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from se.api.state import State
 from se.config import LOG_MD, PROJECT, TARGET, WORKER_URL
 from se.infer.combine import ORDER
-from se.api import explore, scene, targets_api
+from se.api import explore, scene, seismic, targets_api
 from se.jobs import map_job
 
 app = FastAPI(title="subsurface-evidence", root_path=os.environ.get("ROOT_PATH", ""), docs_url="/api/docs", openapi_url="/api/openapi.json")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST", "DELETE"])
+app.add_middleware(GZipMiddleware, minimum_size=2000)  # scene and map answers are large JSON
 app.include_router(explore.router)
 app.include_router(targets_api.router)
+app.include_router(seismic.router)
 S: dict = {}
 
 
@@ -192,20 +195,20 @@ def docs_list():
 LAST = {}  # the last heavy job and where it ran, shown in the UI header (hide nothing)
 
 
-def estimate_surfaces(s, fs, lat_min, lat_max, target):
+def estimate_surfaces(s, fs, lat_min, lat_max, target, res=0.15, spatial=True):
     """Estimate surfaces for the 3D scene: on the GPU worker when there is one (the proxy wakes it), else here."""
     t0, via = time.time(), "this process (CPU)"
     out = None
     if WORKER_URL:
         try:
-            r = httpx.post(f"{WORKER_URL}/run/surfaces", json={"formations": fs, "lat_min": lat_min, "lat_max": lat_max, "target": target}, timeout=1800)
+            r = httpx.post(f"{WORKER_URL}/run/surfaces", json={"formations": fs, "lat_min": lat_min, "lat_max": lat_max, "target": target, "res": res, "spatial": spatial}, timeout=1800)
             if r.status_code == 200:
                 j = r.json()
                 out, via = j["surfaces"], f"GPU worker ({j['device']})"
         except httpx.HTTPError:
             pass
     if out is None:
-        out = [x for x in (scene.surface(s, f, lat_min, lat_max) for f in fs) if x]
+        out = [x for x in (scene.surface(s, f, lat_min, lat_max, res=res, spatial=spatial) for f in fs) if x]
     LAST.update({"job": "3D surfaces", "via": via, "seconds": round(time.time() - t0, 2)})
     return out
 
@@ -223,15 +226,21 @@ def formations3d(target: str = "green_clay"):
 
 
 @app.get("/api/scene")
-def scene_(formations: str, surfaces: bool = True, lat_min: float = 0.0, lat_max: float = 90.0, target: str = "green_clay"):
+def scene_(formations: str, surfaces: bool = True, lat_min: float = 0.0, lat_max: float = 90.0, target: str = "green_clay", res: float = 0.15, spatial: bool = True):
     """Wells (segments per unit) and smoothed surfaces for the chosen formations, plus the hotspots found in them."""
     s = st(target)
     fs = [f for f in formations.split(",") if f][:8]
     u = s.units[s.units.name.isin(fs) & s.units.lat.between(lat_min, lat_max)]
     if not hasattr(s, "_hot"):
         s._hot = scene.hotspots(s)
-    return clean({"formations": fs, "wells": scene.wells(u), "surfaces": estimate_surfaces(s, fs, lat_min, lat_max, target) if surfaces else [],
+    key = (tuple(fs), surfaces, lat_min, lat_max, res, spatial)  # the same request again (a style change in the UI) is answered from memory
+    cache = s.__dict__.setdefault("_scene_cache", {})
+    if key not in cache:
+        if len(cache) >= 16:
+            cache.pop(next(iter(cache)))
+        cache[key] = clean({"formations": fs, "wells": scene.wells(u), "surfaces": estimate_surfaces(s, fs, lat_min, lat_max, target, res, spatial) if surfaces else [],
                   "hotspots": [h for h in s._hot if h["formation"] in fs and lat_min <= h["lat"] <= lat_max], "frame": {"lat0": scene.LAT0, "lon0": scene.LON0}, "units_total": int(len(u)), "units_shown": int(min(len(u), 4000))})
+    return cache[key]
 
 
 @app.get("/api/hotspots")

@@ -39,6 +39,10 @@ PRESETS = [
      "words": {"rows": "drill-stem tests", "hit": "flowed oil", "short": "oil flow", "unit": "well x formation interval"}},
     {"title": "Heavy mud (> 1.6 sg) in a formation", "mode": "interval", "table": "wellbore_mud", "population": [], "success": ["wlbMudWeightAtMD|gt|1.6"],
      "words": {"rows": "mud measurements", "hit": "needed mud heavier than 1.6 sg", "short": "heavy mud", "unit": "well x formation interval"}},
+    {"title": "Calcareous clay rows", "mode": "text", "keywords": ["calcareous", "calcite", "carbonate"], "lith": ["clay"],
+     "words": {"rows": "described clay rows", "hit": "mention calcareous or calcite", "short": "calcareous", "unit": "well x formation interval"}},
+    {"title": "Pyrite in described rows", "mode": "text", "keywords": ["pyrite", "pyritic"], "lith": ["clay", "sand", "carbonate"],
+     "words": {"rows": "described rows", "hit": "mention pyrite", "short": "pyrite", "unit": "well x formation interval"}},
 ]
 
 
@@ -63,7 +67,7 @@ def evaluate(spec: dict) -> dict:
         shutil.rmtree(d, ignore_errors=True)
         raise ValueError(f"too little data to validate: {len(lab)} labelled units, {int(lab.n_green.sum())} successes, {lab.wellbore.nunique()} wells (need 200, 20, 40)")
     u.to_parquet(d / "units.parquet")
-    bins = [1, 2, 3, 5, 8, 13, 26, 61, 10**9] if spec["mode"] == "interval" else [1, 2]
+    bins = [1, 2, 3, 5, 8, 13, 26, 61, 10**9] if spec["mode"] in ("interval", "text") else [1, 2]
     r = cv.run(u, d, quick=True, name=f"share of {words(spec)['rows']} that {words(spec)['hit']}", cov_bins=bins)
     spec["summary"] = {"units": r["data"]["labelled"], "wells": r["data"]["wellbores_labelled"], "trials": r["data"]["rows"], "successes": r["data"]["green_rows"], "base_rate": r["data"]["base_rate"],
                        "gain_formation": r["delta"]["strat_over_constant"], "gain_spatial": r["delta"]["spatial_over_strat"], "seconds": round(time.time() - t0)}

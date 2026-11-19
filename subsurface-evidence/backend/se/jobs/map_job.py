@@ -59,12 +59,12 @@ def run(strat, units, formation: str, res_deg: float = 0.1, ell: float = 20.0, k
     P, Q = P - c0, Q - c0
     pf = strat.table[formation][0] if formation in strat.table else strat.p0
     base = np.log(strat.p0 / (1 - strat.p0))
-    t = weights(P, Q, tr.n_green.to_numpy(float), tr.coverage.to_numpy(float), ell, dev) if use_spatial else np.zeros((len(P), 4))
-    local = (t[:, 0] + k * pf) / (t[:, 1] + k)
+    t = weights(P, Q, tr.n_green.to_numpy(float), tr.coverage.to_numpy(float), ell, dev)  # always: the reach mask and neighbour counts are shown even when the layer is off
+    local = (t[:, 0] + k * pf) / (t[:, 1] + k) if use_spatial else np.full(len(P), pf)
     logit_f = np.log(pf / (1 - pf)) - base
     llr_sp = np.log(local / (1 - local)) - np.log(pf / (1 - pf))
     raw = base + logit_f + llr_sp
-    near = t[:, 3] if use_spatial else np.full(len(P), np.nan)
+    near = t[:, 3]
     return {"formation": formation, "lat": lat.tolist(), "lon": lon.tolist(), "shape": [len(lat), len(lon)], "logit": raw.reshape(len(lat), len(lon)).tolist(),
             "neighbours": t[:, 2].reshape(len(lat), len(lon)).tolist(), "nearest_km": near.reshape(len(lat), len(lon)).tolist(), "formation_rate": float(pf), "base_rate": float(strat.p0),
             "cells": int(len(P)), "units": int(len(tr)), "device": dev, "seconds": round(time.time() - t0, 3), "res_deg": res_deg, "ell_km": ell, "reach_km": 3 * ell}

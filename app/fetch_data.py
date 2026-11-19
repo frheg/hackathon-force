@@ -241,6 +241,65 @@ def huggingface(repo: str, dest, workers: int = 6) -> list:
     return out
 
 
+def co2datashare(slug: str, dest, only=(), country: str = "Norway", affiliation: str = "Student (MSc thesis)") -> list:
+    """Every resource of a co2datashare.org dataset. The site asks you to accept its licence (CC BY based: credit Equinor and Gassnova, no
+    reselling), then a country and an affiliation, before each download; the owner of this repo accepted and gave both (LOG L035). Flow per
+    resource: POST the page (CSRF) -> modal with a second CSRF token -> POST /multiple_download -> 302 to the file. Existing files are skipped."""
+    import re
+
+    base = "https://co2datashare.org"
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    got = []
+    with httpx.Client(follow_redirects=False, timeout=httpx.Timeout(60, read=600)) as c:
+        ids = sorted(set(re.findall(rf"/dataset/{slug}/resource/([0-9a-f-]{{36}})", c.get(f"{base}/dataset/{slug}").text)))
+        for rid in ids:
+            if only and not any(o in rid for o in only):
+                continue
+            page_url = f"{base}/dataset/{slug}/resource/{rid}"
+            for attempt in range(3):
+                try:
+                    t1 = re.search(r'name="_csrf_token" value="([^"]+)"', c.get(page_url).text).group(1)
+                    modal = c.post(page_url, data={"_csrf_token": t1}).text  # the licence step; answers with the download form
+                    t2 = re.search(r'id="resource-download".*?name="_csrf_token" value="([^"]+)"', modal, re.S).group(1)
+                    r = c.post(f"{base}/multiple_download", data={"_csrf_token": t2, "res_id": rid, "affiliation": affiliation, "country": country, "download": "Download"})
+                    url = r.headers["location"]
+                    name = url.split("?")[0].rsplit("/", 1)[-1]
+                    f = dest / name
+                    if f.exists() and f.stat().st_size > 0:
+                        print(f"{name}: have it", flush=True)
+                        break
+                    tmp = f.with_suffix(f.suffix + ".part")
+                    n, t0 = 0, time.time()
+                    with c.stream("GET", url, follow_redirects=True) as d, open(tmp, "wb") as out:
+                        d.raise_for_status()
+                        for chunk in d.iter_bytes(1 << 22):
+                            out.write(chunk)
+                            n += len(chunk)
+                    if not zipfile.is_zipfile(tmp):
+                        raise httpx.HTTPError("the answer is not a zip")
+                    tmp.rename(f)
+                    print(f"{name}: {n / 1e6:.0f} MB, {n / 1e6 / (time.time() - t0):.1f} MB/s", flush=True)
+                    got.append(f)
+                    break
+                except (httpx.HTTPError, AttributeError, KeyError) as e:
+                    print(f"{rid[:8]}: attempt {attempt + 1} failed: {e}", flush=True)
+                    time.sleep(5)
+    (dest / "LICENCE.txt").write_text(
+        f"co2datashare.org/dataset/{slug}\nLicence: CC BY 4.0 based (Gassnova and Equinor): credit Equinor and Gassnova, link to the terms, no reselling, covers all data in the set.\n"
+        "Terms: https://co2datashare.org/smeaheia-dataset/static/SMEAHEIA DATASET LICENSE_Gassnova and Equinor.pdf (Smeaheia); see the dataset page for Sleipner.\n"
+        "Accepted for this repo on 2026-11-19 by its owner.\n")
+    return got
+
+
+def smeaheia() -> None:
+    co2datashare("smeaheia-dataset", DATA_DIR / "seismic" / "smeaheia")
+
+
+def sleipner() -> None:
+    co2datashare("sleipner-4d-seismic-dataset", DATA_DIR / "seismic" / "sleipner")
+
+
 def realpore() -> None:
     zenodo(4723018, OFFICIAL / "realpore")
 
@@ -401,7 +460,7 @@ if __name__ == "__main__":
              "realpore": realpore, "force2020_las": force2020_las, "text": text, "adele": adele,
              "completion": completion}
     # these three are extra public seismic and are not part of the default run: name them to fetch
-    extra = {"penobscot": penobscot, "parihaka": parihaka, "faultseg3d": faultseg3d, "volve_databricks": volve_databricks}
+    extra = {"penobscot": penobscot, "parihaka": parihaka, "faultseg3d": faultseg3d, "volve_databricks": volve_databricks, "smeaheia": smeaheia, "sleipner": sleipner}
     steps.update(extra)
     for w in sys.argv[1:] or [k for k in steps if k not in extra]:
         steps[w]()

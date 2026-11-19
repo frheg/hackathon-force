@@ -30,7 +30,23 @@ def _options() -> dict:
 
 @router.get("/targets/options")
 def options():
-    return _options()
+    t = builder.text_lines()
+    return {**_options(), "text": {"lines": int(len(t)), "wells": int(t.wellbore.nunique()), "liths": {k: int(v) for k, v in t.lith.value_counts().items()}}}
+
+
+@router.get("/text/preview")
+def text_preview(keywords: str, lith: str = "clay,sand,carbonate"):
+    """How many report lines a keyword recipe matches, and a few of them with their source (well, file, page), before anything is built."""
+    try:
+        rx = builder.keyword_regex(keywords.split(","))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    t = builder.text_lines()
+    t = t[t.lith.isin([x for x in lith.split(",") if x])]
+    hit = t[t.text.str.contains(rx)]
+    ex = hit.sample(min(8, len(hit)), random_state=0) if len(hit) else hit
+    return {"lines": int(len(t)), "matches": int(len(hit)), "share": float(len(hit) / max(len(t), 1)), "wells": int(hit.wellbore.nunique()),
+            "examples": [{"wellbore": r.wellbore, "file": r.file, "page": int(r.page), "depth": float(r.depth_from), "lith": r.lith, "text": r.text} for r in ex.itertuples()]}
 
 
 @router.get("/targets")
@@ -42,11 +58,15 @@ def targets():
 def build(spec: dict = Body(...)):
     from se.api import main  # drop the cached state of a rebuilt target
 
-    if spec.get("mode") not in ("well", "interval") or not spec.get("success"):
-        raise HTTPException(400, "a recipe needs a mode (well or interval) and at least one success filter")
-    tabs = builder.WELL_TABLES if spec["mode"] == "well" else builder.INTERVAL_TABLES
-    if spec.get("table") not in tabs:
-        raise HTTPException(400, f"table must be one of {list(tabs)}")
+    if spec.get("mode") == "text":
+        if not any((k or "").strip() for k in spec.get("keywords") or []):
+            raise HTTPException(400, "a text recipe needs at least one keyword")
+    else:
+        if spec.get("mode") not in ("well", "interval") or not spec.get("success"):
+            raise HTTPException(400, "a recipe needs a mode (well or interval) and at least one success filter")
+        tabs = builder.WELL_TABLES if spec["mode"] == "well" else builder.INTERVAL_TABLES
+        if spec.get("table") not in tabs:
+            raise HTTPException(400, f"table must be one of {list(tabs)}")
     if not LOCK.acquire(blocking=False):
         raise HTTPException(409, "another target is being built, try again in a minute")
     try:

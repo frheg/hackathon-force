@@ -38,3 +38,12 @@ Mendeley volume instead.
 
 New Zealand Petroleum and Minerals for Parihaka and Kerry; Geoscience Australia for Adele; dGB Earth Sciences and
 TNO for F3; the Penobscot Interpretation Dataset authors (Baroni et al.); the FaultSeg3D authors (Wu et al., GEOPHYSICS 84(3)).
+
+## Downloaded 2026-11-19: open seismic over the Norwegian North Sea (co2datashare.org)
+
+| Dataset | Where | What | Licence and credit |
+|---|---|---|---|
+| Smeaheia (Gassnova, Equinor) | `data/seismic/smeaheia/` | 3D surveys GN1101 and TNE01 (SEG-Y, ED50 UTM 31N), 2D lines, horizons, surfaces, interval velocity maps, fault sticks, well logs 32/2-1 and 32/4-1, reports, simulation models. DOI 10.11582/2021.00012 | CC BY 4.0 based: credit Equinor and Gassnova, no reselling. Credit shown in the app. |
+| Sleipner 4D (Equinor) | `data/seismic/sleipner/` | Ten 3D vintages 1994 to 2010 over the Utsira Formation CO2 injection | Same portal and licence family; see the dataset page. |
+
+Fetch: `app/fetch_data.py smeaheia` and `sleipner`. The site asks for acceptance, a country and an affiliation per download; the repo owner accepted and gave them (LOG L035).

@@ -12,6 +12,7 @@ A mention is not presence at depth. Confidence says how well it is pinned down:
   low     no depth, or no lithology word: general text, formation descriptions, reasoning
 """
 
+import os
 import re
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -22,7 +23,8 @@ import pandas as pd
 
 from common import DATA_DIR, norm, save_json
 
-OUT = DATA_DIR / "atlas" / "greenclay"
+OUT = DATA_DIR / "atlas" / os.environ.get("GREENCLAY_OUT", "greenclay")  # another folder to re-run without touching the published tables
+WORKERS = int(os.environ.get("WORKERS", "14"))
 
 # the minerals and colours that make a green clay; the first group that matches names the kind
 KINDS = [
@@ -194,7 +196,7 @@ def lith_class(line: str) -> str:
 
 
 def describe_page(text: str) -> list:
-    """Every rock description row on a page, green or not: (depth_from, depth_to, has_green, lithology class). This is the coverage: where a
+    """Every rock description row on a page, green or not: (depth_from, depth_to, has_green, lithology class, line text). This is the coverage: where a
     report described the rock at a depth, so that "no mention" there means something."""
     out = []
     for raw in text.splitlines():
@@ -205,7 +207,7 @@ def describe_page(text: str) -> list:
         if not c:
             continue
         _, a, b, _u = c[0]
-        out.append((a, b, bool(MINERAL.search(line)), lith_class(line)))
+        out.append((a, b, bool(MINERAL.search(line)), lith_class(line), line[:400]))  # the text is kept so any keyword can be a target (LOG L034)
     return out
 
 
@@ -236,7 +238,7 @@ def main():
     files = [str(f) for f in json_files()]
     OUT.mkdir(parents=True, exist_ok=True)
     rows, per_file, cover = [], [], []
-    with ProcessPoolExecutor(14) as pool:
+    with ProcessPoolExecutor(WORKERS) as pool:
         for i, (folder, name, pages, desc, labels, drows) in enumerate(pool.map(scan, files, chunksize=8)):
             rows += labels
             cover += [(folder, name, *r) for r in drows]
@@ -260,10 +262,12 @@ def main():
                       "select wlbWellboreName, wlbNsDecDeg, wlbEwDecDeg from wellbore_development").fetchdf()
     pos["wellbore"] = pos["n"].map(norm)
     wells = wells.merge(pos.drop_duplicates("wellbore")[["wellbore", "la", "lo"]].rename(columns={"la": "lat", "lo": "lon"}), on="wellbore", how="left")
-    cov = pd.DataFrame(cover, columns=["folder", "file", "page", "depth_from", "depth_to", "has_green", "lith"])
-    cov["wellbore"] = cov["folder"].map(lambda s: norm(s.replace("_", "/", 1).replace("_", " ")))
-    cov = cov.drop_duplicates(["wellbore", "depth_from", "depth_to", "has_green", "lith"]).drop(columns=["folder", "file", "page"]).reset_index(drop=True)
+    full = pd.DataFrame(cover, columns=["folder", "file", "page", "depth_from", "depth_to", "has_green", "lith", "text"])
+    full["wellbore"] = full["folder"].map(lambda s: norm(s.replace("_", "/", 1).replace("_", " ")))
+    full = full.drop_duplicates(["wellbore", "depth_from", "depth_to", "has_green", "lith"]).reset_index(drop=True)
+    cov = full.drop(columns=["folder", "file", "page", "text"])  # same table as before the text was kept
     cov.to_parquet(OUT / "descriptions.parquet")
+    full[["wellbore", "file", "page", "depth_from", "depth_to", "lith", "has_green", "text"]].to_parquet(OUT / "descriptions_text.parquet")
     labels.to_parquet(OUT / "labels.parquet")
     wells.to_parquet(OUT / "wells.parquet")
     top = labels[labels.confidence != "low"]

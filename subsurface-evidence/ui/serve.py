@@ -5,10 +5,12 @@ from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 BACKEND = os.environ.get("BACKEND_URL", "http://127.0.0.1:8300")
 app = FastAPI(docs_url=None, openapi_url=None)
+app.add_middleware(GZipMiddleware, minimum_size=2000)  # the proxied JSON and the static files travel compressed to the browser
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "DELETE"])

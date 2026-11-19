@@ -30,9 +30,9 @@ label.chk{display:inline-flex;gap:5px;align-items:center;cursor:pointer;font-siz
 .md h1,.md h2{font-size:18px;margin:22px 0 4px;border:0;padding:0}.md h2::before{content:""}.md li{margin:3px 0}.md code{background:var(--faint);padding:1px 4px}
 /* full-screen stages (3D, map) with floating, hideable, draggable panes */
 .stage{position:fixed;inset:44px 0 0 0;background:var(--paper)}.stage .fill{position:absolute;inset:0}#map{background:var(--faint)}
-.pane{position:absolute;z-index:10;width:310px;max-height:calc(100% - 24px);display:flex;flex-direction:column;background:var(--paper);border:1px solid var(--ink);font-size:13px}
+.pane{position:absolute;z-index:10;width:310px;max-height:calc(100% - 24px);min-width:190px;min-height:42px;max-width:92%;overflow:hidden;resize:both;display:flex;flex-direction:column;background:var(--paper);border:1px solid var(--ink);font-size:13px}
 .pane .ph{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;border-bottom:1px solid var(--rule);cursor:move;font-weight:600;user-select:none;background:var(--faint)}
-.pane .ph button{background:none;border:0;cursor:pointer;color:var(--ink);font-size:15px;line-height:1;padding:0 4px}.pane .pb{padding:8px 10px;overflow:auto}.pane.shut .pb{display:none}.pane.shut{width:auto;min-width:150px}
+.pane .ph button{background:none;border:0;cursor:pointer;color:var(--ink);font-size:15px;line-height:1;padding:0 4px}.pane .pb{padding:8px 10px;overflow:auto;flex:1;min-height:0}.pane.shut .pb{display:none}.pane.shut{width:auto;min-width:150px;min-height:0;height:auto!important;resize:none}
 .pane .pb p{margin:5px 0}.pane .pb .row{margin:5px 0}.pane .pb .hs{border-top:1px solid var(--rule);padding:8px 0;cursor:pointer}.pane .pb .hs:first-child{border-top:0}.pane .pb .hs:hover b,.pane .pb .hs.sel b{text-decoration:underline}
 .legend{display:flex;align-items:center;gap:8px;font:12px Inter,sans-serif;color:var(--mut)}.ramp{height:9px;width:150px;background:linear-gradient(90deg,rgba(31,95,153,.12),#1f5f99,#08306b)}
 #panes{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:12}.px{image-rendering:pixelated}
@@ -40,3 +40,15 @@ label.chk{display:inline-flex;gap:5px;align-items:center;cursor:pointer;font-siz
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]) .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}}
 @media(max-width:760px){#ctl label,#job{display:none}.pane{width:260px}}
 .stage .fill{z-index:0}
+
+/* loading state: a bar under the header while any request runs, a header note, and a centred notice on stages */
+body.busy #bar::after{content:"";position:absolute;left:0;bottom:-1px;height:3px;width:30%;background:var(--data);animation:run 1.1s ease-in-out infinite}
+@keyframes run{0%{left:-30%}100%{left:100%}}
+#busy{font:12.5px Inter,sans-serif;color:var(--data);max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wait{position:absolute;z-index:11;top:54px;left:50%;transform:translateX(-50%);background:var(--paper);border:1px solid var(--ink);padding:6px 14px;font:13px Inter,sans-serif;display:flex;gap:10px;align-items:center;max-width:70%}
+.wait i{width:14px;height:14px;border:2px solid var(--rule);border-top-color:var(--ink);border-radius:50%;animation:spin .8s linear infinite;flex:none}@keyframes spin{to{transform:rotate(360deg)}}
+.pane .pb .hs.hov{background:var(--faint);outline:2px solid var(--ink);outline-offset:-2px}
+#panes{display:flex;gap:6px}
+/* docks: panes stack in a column and share its height (each scrolls inside); dragging a pane out makes it float */
+.dock{position:absolute;top:12px;bottom:12px;width:340px;display:flex;flex-direction:column;gap:8px;pointer-events:none;z-index:10}.dock.left{left:12px}.dock.right{right:12px;top:58px;width:380px}
+.dock .pane{position:relative;pointer-events:auto;width:auto;max-width:none;max-height:none;flex:0 1 auto;min-height:42px;resize:vertical}.dock .pane.shut{flex:0 0 auto}.pane.free{position:absolute;max-height:calc(100% - 24px)}

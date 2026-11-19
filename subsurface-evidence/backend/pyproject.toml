@@ -4,9 +4,17 @@ version = "0.1.0"
 description = "Turns subsurface evidence (logs, text, tops, space) into a probability with its reasons."
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.120", "uvicorn[standard]>=0.38", "httpx>=0.28",
-    "numpy>=2.3", "scipy>=1.16", "pandas>=2.3", "pyarrow>=21", "duckdb>=1.4",
-    "scikit-learn>=1.7", "pyyaml>=6",
+    "fastapi>=0.120",
+    "uvicorn[standard]>=0.38",
+    "httpx>=0.28",
+    "numpy>=2.3",
+    "scipy>=1.16",
+    "pandas>=2.3",
+    "pyarrow>=21",
+    "duckdb>=1.4",
+    "scikit-learn>=1.7",
+    "pyyaml>=6",
+    "pyproj>=3.8.0",
 ]
 
 [project.optional-dependencies]
