@@ -288,7 +288,10 @@ def cube(survey: str, max_points: int = 350_000, horizons: bool = True, fill: bo
         q = np.where(ilxl[:, col] == val)[0]
         return float(np.hypot(*(xy[q].max(0) - xy[q].min(0)))) if len(q) > 1 else 1.0
     spans = {"along_crossline_axis_km": round(span(0, ui[len(ui) // 2]), 2), "along_inline_axis_km": round(span(1, uj[len(uj) // 2]), 2)}
+    A = np.c_[np.ones(keep.sum()), ilxl[keep, 0], ilxl[keep, 1]]  # the survey grid is regular: x, y (scene km) are linear in inline and crossline
+    cx, cy = np.linalg.lstsq(A, xy[keep, 0], rcond=None)[0], np.linalg.lstsq(A, xy[keep, 1], rcond=None)[0]
     out = {"survey": survey, **spans, "il": gi.tolist(), "xl": gj.tolist(), "t_ms": t.round(1).tolist(), "amp": a.ravel().tolist(), "order": "il, xl, t (t fastest)",
+           "xy_from_il_xl": {"x": cx.round(6).tolist(), "y": cy.round(6).tolist(), "frame": "scene km (as curtain x, y): x = c0 + c1 il + c2 xl"},
            "stride": {"inline": si, "crossline": sj, "time": sk}, "filled_traces": filled, "traces_in_block": int(have.sum()), "amp_p99": float(m["amp_p99"]), "credit": CREDIT.get(m["dataset"], ""), "horizons": []}
     if horizons and m["dataset"] == "smeaheia":
         to_utm = Transformer.from_crs(4326, 23031, always_xy=True)

@@ -98,10 +98,13 @@ def build() -> dict:
     return out
 
 
-def predict(x, y, zb, wd=None) -> tuple[np.ndarray, np.ndarray]:
-    """Temperature (deg C) and sigma at points (3035 km, depth below seabed m, water depth m), from the adopted model."""
+def predict(x, y, zb, wd=None, exclude=None) -> tuple[np.ndarray, np.ndarray]:
+    """Temperature (deg C) and sigma at points (3035 km, depth below seabed m, water depth m), from the adopted model.
+    exclude: wellbores left out of the fit (P12.2: inputs refitted without a fold's held-out wells)."""
     t = pd.read_parquet(EARTH / "temperature_obs.parquet"); r = json.loads((EARTH / "temperature_report.json").read_text())
     T0, g = r["T0_C"], r["gradient_C_per_km"] / 1000
+    if exclude:
+        t = t[~t.wellbore.isin(exclude)]; T0, g = fit_const(t)
     zb = np.asarray(zb, float); zc = np.maximum(zb, Z_MIN)
     if not r["adopt_gp"]:
         T, sd = T0 + g * zc, np.full(zb.shape, r["rmse_const_C"] * r["inflation"])

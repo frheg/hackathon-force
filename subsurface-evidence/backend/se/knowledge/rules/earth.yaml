@@ -1,6 +1,7 @@
 # Rules for the NCS earth model (PLAN P4.1, LOG L066). Each rule: what it says, who says it, how our data tests it.
-# status: sourced (the text is quoted from a source we hold: the Sodir lexicon in ncs.duckdb) | sourced_unverified (a standard reference
-# cited from domain knowledge; the original was not re-read in this session) | inferred (physics, no source for this exact claim).
+# status: sourced (the claim, with its number, was read in the source: the Sodir lexicon, a fetched page or abstract) | sourced_unverified
+# (the reference exists and is the one meant, checked by Crossref or its page, but the claim was not read in its text) | inferred
+# (physics, no source for this exact claim). Each source carries `checked`: how it was verified (P12.5, LOG L078).
 # Verdicts and numbers are written by se/earth/rules.py into earth_rules_report.json, never typed here.
 retrieved: 2026-11-19
 rules:
@@ -8,8 +9,8 @@ rules:
     statement: Porosity falls with burial depth, roughly exponentially (mechanical compaction).
     status: sourced_unverified
     sources:
-      - {url: "https://doi.org/10.1306/3D93289E-16B1-11D7-8645000102C1865D", says: "Athy (1930), AAPG Bulletin 14: density, porosity and compaction of sedimentary rocks"}
-      - {url: "https://doi.org/10.1029/JB085iB07p03711", says: "Sclater and Christie (1980), JGR 85: North Sea sandstone phi0 0.49, c 0.27 per km; shale 0.63, 0.51"}
+      - {url: "https://doi.org/10.1306/3D93289E-16B1-11D7-8645000102C1865D", says: "Athy (1930), AAPG Bulletin 14: density, porosity and compaction of sedimentary rocks", checked: "crossref 2026-11-20: Density, Porosity, and Compaction of Sedimentary Rocks (Athy 1930, AAPG Bulletin)"}
+      - {url: "https://doi.org/10.1029/JB085iB07p03711", says: "Sclater and Christie (1980), JGR 85: North Sea sandstone phi0 0.49, c 0.27 per km; shale 0.63, 0.51", checked: "crossref 2026-11-20: Continental stretching: an explanation of the post-mid-Cretaceous subsidence of the central North Sea Basin (Sclater, Christie 1980, JGR); the porosity constants not read"}
     check: {type: athy_core, expect: "c > 0; c near 0.27 per km for cored (mostly sandstone) intervals"}
     use: porosity trend in P3.2 (unit_athy)
     guard: cores are taken in reservoirs, so the fitted curve describes cored rock, not the whole column
@@ -17,7 +18,7 @@ rules:
     statement: Density porosity phi = (rho_matrix - rho_bulk) / (rho_matrix - rho_fluid), with a quartz matrix of 2.65 g/cm3 for sandstone.
     status: sourced_unverified
     sources:
-      - {url: "https://petrowiki.spe.org/Density_logging", says: "density porosity from bulk density with matrix and fluid densities"}
+      - {url: "https://petrowiki.spe.org/Density_logging", says: "density porosity from bulk density with matrix and fluid densities", checked: "page blocks automated reading (challenge page); not read"}
     check: {type: density_vs_core, expect: "core porosity follows density porosity in sandstone units"}
     use: physics baseline for porosity where cores are absent
     guard: shale and heavy minerals bias it; gas lowers rho_bulk and raises apparent porosity
@@ -25,7 +26,7 @@ rules:
     statement: Bulk density rises with P-wave velocity, rho = 0.31 V^0.25 (rho g/cm3, V m/s).
     status: sourced_unverified
     sources:
-      - {url: "https://doi.org/10.1190/1.1440465", says: "Gardner, Gardner and Gregory (1974), Geophysics 39"}
+      - {url: "https://doi.org/10.1190/1.1440465", says: "Gardner, Gardner and Gregory (1974), Geophysics 39", checked: "crossref 2026-11-20: Formation velocity and density; the diagnostic basics for stratigraphic traps (Gardner, Gardner, Gregory 1974, Geophysics)"}
     check: {type: gardner_logs, expect: "predicted RHOB within about 0.1 g/cm3 of measured in the median"}
     use: links sonic, density and seismic velocity (depth conversion sanity)
     guard: an empirical average for brine-saturated sediments; not for evaporites or coal
@@ -33,7 +34,7 @@ rules:
     statement: Normal pore pressure follows a brine column of about 1.03 g/cm3 from sea level.
     status: sourced_unverified
     sources:
-      - {url: "https://petrowiki.spe.org/Pore_pressure", says: "normal (hydrostatic) pressure gradient of formation water, about 0.433-0.465 psi/ft"}
+      - {url: "https://petrowiki.spe.org/Pore_pressure", says: "normal (hydrostatic) pressure gradient of formation water, about 0.433-0.465 psi/ft", checked: "page blocks automated reading (challenge page); not read"}
     check: {type: hydrostatic, expect: "normally pressured DSTs give EMW near 1.03"}
     use: pressure reference in P3.3 (excess over hydrostatic)
     guard: overpressured units (common below the Cretaceous in the graben) do not follow it
@@ -41,7 +42,8 @@ rules:
     statement: The northern North Sea geothermal gradient is about 25-40 deg C per km.
     status: sourced_unverified
     sources:
-      - {url: "https://doi.org/10.1016/0264-8172(95)98381-E", says: "regional North Sea heat-flow and gradient compilations"}
+      - {url: "https://doi.org/10.1038/247028a0", says: "Evans and Coleman (1974), Nature 247: North Sea geothermal gradients", checked: "crossref 2026-11-20: North Sea Geothermal Gradients (Evans, Coleman 1974, Nature); the range not read"}
+      - {url: "https://doi.org/10.1038/230235a0", says: "Harper (1971), Nature 230: approximate geothermal gradients in the North Sea basin", checked: "crossref 2026-11-20: Approximate Geothermal Gradients in the North Sea Basin (Harper 1971, Nature)"}
     check: {type: gradient_range, low: 25, high: 40}
     use: temperature model in P3.4
     guard: DST temperatures can read low (not fully equilibrated)
@@ -49,9 +51,9 @@ rules:
     statement: The Brent Group is a delta system; the Ness Formation is delta or coastal plain with coals, the Etive Formation shoreface and barrier sands.
     status: sourced
     sources:
-      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/110", says: "Ness: an association of coals, shales, siltstones and very fine to medium grained sandstones ... delta plain or coastal plain deposition"}
-      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/35", says: "Etive: massive ... sandstones ... upper shoreface, barrier bar, mouth bar and distributary channel deposits"}
-      - {url: "https://factpages.sodir.no/strat/pageview/litho/groups/16", says: "Brent: sandstones, siltstones and shales with subordinate coal beds; Advance and retreat of Brent Delta system"}
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/110", says: "Ness: an association of coals, shales, siltstones and very fine to medium grained sandstones ... delta plain or coastal plain deposition", checked: "held: strat_litho_overview in ncs.duckdb (Sodir lexicon text, quoted)"}
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/35", says: "Etive: massive ... sandstones ... upper shoreface, barrier bar, mouth bar and distributary channel deposits", checked: "held: strat_litho_overview in ncs.duckdb (Sodir lexicon text, quoted)"}
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/groups/16", says: "Brent: sandstones, siltstones and shales with subordinate coal beds; Advance and retreat of Brent Delta system", checked: "held: strat_litho_overview in ncs.duckdb (Sodir lexicon text, quoted)"}
     check: {type: brent_facies, expect: "coal share highest in Ness; Etive the most sand-rich Brent unit"}
     use: sandy delta target (P6)
     guard: lithology shares come from 60 FORCE wells; facies are inferred from lithology, not observed
@@ -59,15 +61,15 @@ rules:
     statement: The Draupne Formation is an organic-rich marine claystone with very high gamma ray (often above 100 API), a source rock and a seal.
     status: sourced
     sources:
-      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/28", says: "carbonaceous ... claystone. It is characterized by very high radioactivity (often above 100 API units) which is a function of organic carbon content ... marine environment with restricted bottom circulation and often with anaerobic conditions"}
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/28", says: "carbonaceous ... claystone. It is characterized by very high radioactivity (often above 100 API units) which is a function of organic carbon content ... marine environment with restricted bottom circulation and often with anaerobic conditions", checked: "held: strat_litho_overview in ncs.duckdb (Sodir lexicon text, quoted)"}
     check: {type: draupne_gr, expect: "median GR above 100 API and above the Heather Formation; shale share at least 0.8"}
     use: source and seal terms of the hydrocarbon target (P6)
     guard: interbedded sandstones lower the gamma ray locally (lexicon)
   - id: R-CO2
     statement: CO2 is supercritical above 31.1 deg C and 7.38 MPa, so storage needs depths where both are exceeded (dense CO2).
-    status: sourced_unverified
+    status: sourced
     sources:
-      - {url: "https://webbook.nist.gov/cgi/cbook.cgi?ID=C124389", says: "NIST: carbon dioxide critical temperature 304.1 K, critical pressure 7.38 MPa"}
+      - {url: "https://webbook.nist.gov/cgi/cbook.cgi?ID=C124389&Mask=4", says: "NIST: carbon dioxide critical temperature 304.1 K, critical pressure 73.8 bar (7.38 MPa)", checked: "page read 2026-11-20: Tc 304.1 K and Pc 73.8 bar found"}
     check: {type: co2_window, Tc: 31.1, Pc: 7.38}
     use: CO2 storage target (P6)
     guard: uses hydrostatic pressure and the P3.4 temperature model with their sigmas
@@ -75,7 +77,7 @@ rules:
     statement: Hydrocarbons are retained below shale-dominated seals; units with hydrocarbons have more shale within 300 m above them than dry ones.
     status: inferred
     sources:
-      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/28", says: "Draupne: claystone (a seal lithology)"}
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/28", says: "Draupne: claystone (a seal lithology)", checked: "held: strat_litho_overview in ncs.duckdb (Sodir lexicon text, quoted)"}
     check: {type: seal_hc, expect: "median seal above HC units > above dry units"}
     use: seal term of the hydrocarbon and CO2 targets (P6)
     guard: seal thickness from the grid at 2 km; faults and seal capacity are not modelled
@@ -84,8 +86,9 @@ rules:
     statement: A source rock generates oil at about 100-150 deg C (the oil window) and gas above about 150 deg C; oil and gas are found more often near a mature source (kitchen).
     status: sourced_unverified
     sources:
-      - {url: "https://doi.org/10.1007/978-3-642-87813-8", says: "Tissot and Welte (1984), Petroleum Formation and Occurrence: oil generation with temperature (oil window), gas at higher maturity"}
-      - {url: "https://archives.datapages.com/data/alt-browse/aapg-special-volumes/m60.htm", says: "Magoon and Dow (1994), AAPG Memoir 60: the petroleum system, from active source rock to trap"}
+      - {url: "https://doi.org/10.1007/978-3-642-87813-8", says: "Tissot and Welte (1984), Petroleum Formation and Occurrence: oil generation with temperature (oil window), gas at higher maturity", checked: "crossref 2026-11-20: Petroleum Formation and Occurrence (Tissot, Welte 1984)"}
+      - {url: "https://doi.org/10.1306/M60585C1", says: "Magoon and Dow (1994), AAPG Memoir 60: the petroleum system, from active source rock to trap", checked: "crossref 2026-11-20: The Petroleum System (Magoon, Dow 1994), in The Petroleum System, From Source to Trap"}
+      - {url: "https://doi.org/10.1016/0264-8172(95)98381-E", says: "Pepper and Corvi (1995), Marine and Petroleum Geology 12: kinetic models of oil and gas generation from kerogen", checked: "crossref 2026-11-20: Simple kinetic models of petroleum formation. Part I (Pepper, Corvi 1995); before P12.5 this DOI was wrongly cited for R-GEO"}
     check: {type: factor_rate, target: hydrocarbons, factor: lkit, below: 2.398, expect: "HC rate within 10 km of a kitchen (log1p 10 = 2.398) above the rate farther away"}
     use: kit_oil, kit_gas, mature features of the hydrocarbon, oil and gas targets (P9.1)
     guard: present-day temperature; uplifted basins (Barents) were hotter in the past, see R-UPLIFT and kit_max. Source presence is the grid's, not a TOC map
@@ -93,7 +96,7 @@ rules:
     statement: In uplifted basins maturity was reached at maximum burial, so the kitchen that charged the traps is where the source was in the oil window before uplift.
     status: inferred
     sources:
-      - {url: "https://doi.org/10.1144/M35.17", says: "Henriksen et al. (2011): uplift and erosion of the greater Barents Sea, impact on prospectivity and petroleum systems"}
+      - {url: "https://doi.org/10.1144/M35.17", says: "Henriksen et al. (2011): uplift and erosion of the greater Barents Sea, impact on prospectivity and petroleum systems", checked: "crossref 2026-11-20"}
     check: {type: factor_rate, target: hydrocarbons, factor: lkit_max, below: 2.398, expect: "HC rate within 10 km of a kitchen at maximum burial above the rate farther away"}
     use: kit_max feature (P9.1), from the burial map of P9.2
     guard: maximum-burial temperature = present temperature + gradient x net exhumation; exhumation from porosity (R-UPLIFT); in basins without uplift it repeats R-MATURE with noise
@@ -101,7 +104,7 @@ rules:
     statement: Oil migrates up-dip from a mature kitchen along the base of the seal, fills traps to their spill point and spills on (fill and spill); units that such oil reaches hold hydrocarbons more often.
     status: sourced_unverified
     sources:
-      - {url: "https://archives.datapages.com/data/alt-browse/aapg-special-volumes/m60.htm", says: "Magoon and Dow (1994): migration from the active source rock to the trap"}
+      - {url: "https://doi.org/10.1306/M60585C1", says: "Magoon and Dow (1994): migration from the active source rock to the trap", checked: "crossref 2026-11-20: The Petroleum System (Magoon, Dow 1994)"}
     check: {type: factor_rate, target: hydrocarbons, factor: p_charge, above: 0.5, expect: "HC rate where migrating oil reaches the unit (p_charge > 0.5) above the rate elsewhere"}
     use: charge features and the charge element of the chance of success (P10.2, P10.5)
     guard: carrier = the unit's own top on kriged 2-4 km surfaces; no fault seal, no expulsion direction; pinch-outs are exits
@@ -109,7 +112,7 @@ rules:
     statement: Oil and gas accumulate in traps, structural closures sealed above; units in closure hold hydrocarbons more often.
     status: sourced_unverified
     sources:
-      - {url: "https://archives.datapages.com/data/alt-browse/aapg-special-volumes/m60.htm", says: "Magoon and Dow (1994): trap formation is an essential process of a petroleum system"}
+      - {url: "https://doi.org/10.1306/M60585C1", says: "Magoon and Dow (1994): trap formation is an essential process of a petroleum system", checked: "crossref 2026-11-20: The Petroleum System (Magoon, Dow 1994)"}
     check: {type: factor_rate, target: hydrocarbons, factor: lclos, above: 0.693, expect: "HC rate in units with closure over 10 m (log1p 1 = 0.693) above the rate without"}
     use: closure, fault and structural-high features (P9.5)
     guard: closures from kriged surfaces at 2-4 km see only large structures; faults are a regional map; wells are drilled on closures, so the contrast is muted by design
@@ -117,16 +120,16 @@ rules:
     statement: Quartz cement grows in sandstones above about 70-80 deg C and then dominates porosity loss.
     status: sourced_unverified
     sources:
-      - {url: "https://archives.datapages.com/data/bulletns/1994-96/data/pg/0080/0005/0700/0731.html", says: "Walderhaug (1996), AAPG Bulletin 80(5) 731-745: kinetic modelling of quartz cementation and porosity loss from the temperature history"}
+      - {url: "https://doi.org/10.1306/64ED88A4-1724-11D7-8645000102C1865D", says: "Walderhaug (1996), AAPG Bulletin 80(5) 731-745: kinetic modelling of quartz cementation and porosity loss from the temperature history", checked: "crossref 2026-11-20: Kinetic Modeling of Quartz Cementation and Porosity Loss in Deeply Buried Sandstone Reservoirs (Walderhaug 1996)"}
     check: {type: porosity_trend, trend: qtz, expect: "a temperature term (T - 70 C)+ improves held-out porosity by 2 percent"}
     use: candidate porosity trend in P9.2
     guard: temperature and depth are nearly collinear in wells, so the data can hardly separate cement from compaction
   - id: R-UPLIFT
     statement: The Barents Sea was uplifted and eroded in the Cenozoic; net exhumation is 0 to more than 3000 m, so rocks are more compacted and were hotter than their present depth implies.
-    status: sourced_unverified
+    status: sourced
     sources:
-      - {url: "https://doi.org/10.1144/M35.17", says: "Henriksen et al. (2011), Geological Society Memoirs 35: uplift and erosion of the greater Barents Sea, impact on petroleum systems"}
-      - {url: "https://www.searchanddiscovery.com/abstracts/html/2011/3Parctic/abstracts/henriksen.htm", says: "net erosion varies from 0 to more than 3000 m"}
+      - {url: "https://doi.org/10.1144/M35.17", says: "Henriksen et al. (2011), Geological Society Memoirs 35: uplift and erosion of the greater Barents Sea, impact on petroleum systems", checked: "crossref 2026-11-20: Uplift and erosion of the greater Barents Sea: impact on prospectivity and petroleum systems (Henriksen et al. 2011)"}
+      - {url: "https://www.searchanddiscovery.com/abstracts/html/2011/3Parctic/abstracts/henriksen.htm", says: "net erosion varies from 0 to more than 3000 m", checked: "page read 2026-11-20: '3000', 'erosion', 'Barents' found"}
     check: {type: burial, expect: "porosity-implied net exhumation of Barents wells (median) between 500 and 3000 m; pilot median within 500 m of 0"}
     use: burial trend in P9.2 and kit_max in P9.1
     guard: exhumation from porosity assumes the pilot compaction curve is normal and the same lithology mix
@@ -134,7 +137,7 @@ rules:
     statement: Old wells that penetrate a storage unit and its seal are the main potential leak paths for stored CO2.
     status: sourced_unverified
     sources:
-      - {url: "https://doi.org/10.1007/s00254-004-1073-5", says: "Gasda, Bachu and Celia (2004), Environmental Geology 46: potentially leaky wells penetrating a deep saline aquifer"}
+      - {url: "https://doi.org/10.1007/s00254-004-1073-5", says: "Gasda, Bachu and Celia (2004), Environmental Geology 46: potentially leaky wells penetrating a deep saline aquifer", checked: "crossref 2026-11-20: Spatial characterization of the location of potentially leaky wells penetrating a deep saline aquifer in a mature sedimentary basin (Gasda, Bachu, Celia 2004)"}
     check: {type: legacy, expect: "counted per cell; no leak observations here, so not testable"}
     use: legacy-wells layer and CO2 evidence (P9.3)
     guard: total depth TVDSS from FactPages; wells without TVD use measured depth (an overcount at depth); plug quality is unknown
@@ -142,7 +145,7 @@ rules:
     statement: Seabed temperature is the bottom-water temperature, about 6-8 deg C in the North Sea and below 0 deg C in the deep Norwegian Sea.
     status: sourced
     sources:
-      - {url: "https://www.ncei.noaa.gov/data/oceans/woa/WOA23/DATA/temperature/csv/decav/1.00/", says: "NOAA World Ocean Atlas 2023, annual mean temperature at standard depths (held in data/woa23)"}
+      - {url: "https://www.ncei.noaa.gov/data/oceans/woa/WOA23/DATA/temperature/csv/decav/1.00/", says: "NOAA World Ocean Atlas 2023, annual mean temperature at standard depths (held in data/woa23)", checked: "held: data/woa23 (downloaded table, SOURCE.md)"}
     check: {type: seabed, expect: "WOA bottom temperature per region; deep Norwegian Sea wells below 1 deg C"}
     use: shallow temperature profile in P3.4 (P9.4)
     guard: 1 degree climatology; steep slopes mix shelf and deep water in one cell
@@ -150,8 +153,29 @@ rules:
     statement: Rock salt conducts heat about two to four times better than other sediments, so the section above thick salt is warmer.
     status: sourced_unverified
     sources:
-      - {url: "https://www.searchanddiscovery.com/abstracts/html/1988/annual/abstracts/0230c.htm", says: "heat flow through and around salt sheets (AAPG 1988 abstract)"}
-      - {url: "https://www.osti.gov/servlets/purl/5225868", says: "measured thermal conductivity of pure halite about 6 W/m K"}
+      - {url: "https://www.searchanddiscovery.com/abstracts/html/1988/annual/abstracts/0230c.htm", says: "heat flow through and around salt sheets (AAPG 1988 abstract)", checked: "page read 2026-11-20: 'salt', 'heat flow', 'conductivity' found"}
+      - {url: "https://www.osti.gov/servlets/purl/5225868", says: "measured thermal conductivity of pure halite about 6 W/m K", checked: "report read 2026-11-20: halite thermal conductivity measurements in W/m K found"}
     check: {type: salt_temp, expect: "a positive salt-thickness term lowers the held-out temperature error by 5 percent"}
     use: temperature model in North Sea south (P9.7)
     guard: Zechstein thickness from the grid (its base is the top plus a median thickness); few DSTs over salt
+  # P11 (LOG L077): rock physics template on the FORCE wells with shear logs
+  - id: R-RPT-CEMENT
+    statement: Above about 70-80 C quartz cement grows at the grain contacts, so clean sands stiffen in shear beyond what friable (uncemented) sand of the same porosity has.
+    status: sourced_unverified
+    sources:
+      - {url: "https://doi.org/10.1190/1.1444059", says: "Dvorkin and Nur (1996), Geophysics 61: elasticity of high-porosity sandstones, friable-sand and contact-cement models for two North Sea data sets", checked: "crossref 2026-11-20: Elasticity of high-porosity sandstones; theory for two North Sea data sets (Dvorkin, Nur 1996)"}
+      - {url: "https://doi.org/10.3997/1365-2397.2004017", says: "Avseth and Odegaard (2004), First Break 22: well log and seismic data analysis using rock physics templates", checked: "crossref 2026-11-20: Well log and seismic data analysis using rock physics templates (Avseth, Odegaard 2004)"}
+      - {url: "https://pangea.stanford.edu/~jack/Avseth.pdf", says: "Avseth et al.: friable-sand and contact-cement trends in North Sea sands", checked: "paper read 2026-11-20: 'contact cement', 'friable', 'Gassmann' found"}
+      - {url: "https://doi.org/10.1306/64ED88A4-1724-11D7-8645000102C1865D", says: "Walderhaug (1996): quartz cementation from about 70-80 C", checked: "crossref 2026-11-20: Walderhaug 1996, AAPG Bulletin; the onset temperature not read"}
+    check: {type: rpt, test: cement_test, expect: "median cement index of clean high-porosity sands at >= 90 C above that at <= 70 C (bands set from theory)"}
+    use: rock physics view (P11.1); evidence for R-QTZ that porosity-depth data could not give
+    guard: FORCE wells with shear logs, pooled across regions; density porosity assumes brine; textbook moduli, coordination number 8.6, critical porosity 0.40
+  - id: R-RPT-FLUID
+    statement: Hydrocarbons in the pores soften the rock in compression but not in shear (Gassmann), so hydrocarbon-bearing sands sit below the brine line on the template.
+    status: sourced_unverified
+    sources:
+      - {url: "https://pangea.stanford.edu/~jack/Avseth.pdf", says: "Avseth et al.: fluid substitution (Gassmann 1951) and the brine, oil and gas lines of a rock physics template", checked: "paper read 2026-11-20: 'Gassmann' found"}
+      - {url: "https://doi.org/10.1017/CBO9780511626753", says: "Mavko, Mukerji and Dvorkin (2009), The Rock Physics Handbook: Gassmann, mineral and fluid moduli", checked: "crossref 2026-11-20: The Rock Physics Handbook (Mavko, Mukerji, Dvorkin 2009)"}
+    check: {type: rpt, test: fluid_test, expect: "well-units with HC softer than dry ones against their brine prediction"}
+    use: rock physics view (P11.1)
+    guard: sonic logs read the invaded zone near the hole, so oil is muted; few labelled units have shear logs

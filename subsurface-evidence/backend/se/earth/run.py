@@ -12,7 +12,7 @@ from se.config import EARTH, PILOT, REGION
 STEPS = [
     ("frame", "se.earth.frame"), ("tops", "se.earth.tops"), ("column", "se.earth.column"), ("surfaces", "se.earth.surfaces"), ("grid", "se.earth.grid"),
     ("pressure", "se.earth.pressure"), ("temperature", "se.earth.temperature"), ("lithology", "se.earth.lithology"), ("poroperm", "se.earth.poroperm"),
-    ("fluids", "se.earth.fluids"), ("factors", "se.earth.factors"), ("targets", "se.earth.targets"), ("volumes", "se.earth.volumes"), ("rules", "se.earth.rules"), ("export", "se.earth.export"), ("gamma", "se.earth.gamma"),
+    ("fluids", "se.earth.fluids"), ("rpt", "se.earth.rpt"), ("factors", "se.earth.factors"), ("targets", "se.earth.targets"), ("volumes", "se.earth.volumes"), ("rules", "se.earth.rules"), ("export", "se.earth.export"), ("gamma", "se.earth.gamma"),
 ]
 
 

@@ -146,14 +146,16 @@ class Model:
         return phi, lk
 
 
-def trend(x, y, zb, wd) -> np.ndarray:
-    """Porosity (percent) of the adopted compaction trend at points, no unit offset (feature for the reservoir target)."""
+def trend(x, y, zb, wd, exclude=None) -> np.ndarray:
+    """Porosity (percent) of the adopted compaction trend at points, no unit offset (feature for the reservoir target).
+    exclude: wellbores left out of the fit (P12.2)."""
     r = json.loads((EARTH / "poroperm_report.json").read_text()); a = r.get("adopted_trend", "athy")
-    if a == "athy":
+    if a == "athy" and not exclude:
         return athy(np.asarray(zb, float), r["athy_fit"]["phi0_pct"], r["athy_fit"]["c_per_km"])
     from se.earth.temperature import predict
 
-    m = Model(a).fit(pd.read_parquet(EARTH / "poroperm_wells.parquet")); T = predict(x, y, zb, wd)[0]
+    t = pd.read_parquet(EARTH / "poroperm_wells.parquet"); t = t[~t.wellbore.isin(exclude)] if exclude else t
+    m = Model(a).fit(t); T = predict(x, y, zb, wd, exclude=exclude)[0]
     return m.trend_at(np.c_[np.ravel(x), np.ravel(y)], np.ravel(zb), np.ravel(T))
 
 

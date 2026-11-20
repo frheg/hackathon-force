@@ -21,7 +21,10 @@ NK_MAX = 400
 
 def build() -> dict:
     s = np.load(EARTH / "surfaces.npz")
-    names, level, M, inside = list(s["names"]), list(s["level"]), s["mean"].astype(np.float64), s["inside"]
+    names, level, M = list(s["names"]), list(s["level"]), s["mean"].astype(np.float64)
+    from se.earth.shelf import mask
+
+    inside = s["inside"] & mask(s["x"], s["y"])  # region box AND the offshore NCS (licence blocks): no cells on land or foreign shelves
     pres = s["presence"]
     col = json.loads((EARTH / "column.json").read_text())
     grp_of = {h["name"]: h.get("group") for h in col["horizons"]}

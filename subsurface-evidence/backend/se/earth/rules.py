@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 import numpy as np
+
+from se.earth import atomic
 import pandas as pd
 import yaml
 
@@ -164,6 +166,11 @@ def check(r: dict) -> dict:
         if "rmse_with_C" not in sa:
             return sa | {"verdict": "not_testable"}
         return sa | {"verdict": "agrees" if sa["adopt"] else "inconclusive" if sa["C_per_km_salt"] > 0 else "disagrees"}
+    if t == "rpt":
+        from se.config import OUT
+
+        p = OUT / "earth" / "rpt_pooled.json"
+        return (json.loads(p.read_text()).get(c["test"]) or {"verdict": "not_testable"}) | {"pooled": "FORCE wells with shear logs, all regions"} if p.exists() else {"verdict": "not_testable", "why": "rock physics not built"}
     return {"verdict": "not_testable"}
 
 
@@ -176,7 +183,7 @@ def build() -> dict:
         except Exception as e:  # a failing check is reported, not hidden
             res = {"verdict": "not_testable", "error": f"{type(e).__name__}: {e}"[:200]}
         out.append({"id": r["id"], "statement": r["statement"], "status": r["status"], "sources": r["sources"], "use": r.get("use"), "guard": r.get("guard"), "test": res})
-    (EARTH / "earth_rules_report.json").write_text(json.dumps(out, indent=1, default=float))
+    atomic.write_json(EARTH / "earth_rules_report.json", out, indent=1, default=float)
     return out
 
 

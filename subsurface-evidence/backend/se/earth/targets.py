@@ -28,7 +28,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GroupKFold
 
 from se.config import DATA, EARTH, OUT
-from se.earth import manifest
+from se.earth import atomic, manifest
 from se.earth.folds import blocks
 
 ELL, K_UNIT, K_NB = 25.0, 10.0, 5.0
@@ -198,6 +198,7 @@ CORR_KM = {"lnb": ELL, "zb_km": 20.0, "phi_athy": 15.0}  # correlation length of
 FAMILIES = ("logistic", "gbm", "spline")
 FAMILY_MARGIN = 0.01  # a non-linear family must beat logistic by this much on held-out blocks, and not lose forward in time (P10.6)
 N_MC_NL = 40  # Monte Carlo draws for the non-linear families (each draw is a full model evaluation)
+N_BOOT = 40  # cluster-bootstrap refits (whole wells) for the coefficient uncertainty (P12.3)
 
 
 def design(target, tr, q, exclude_wells=None, self_out=False):
@@ -323,6 +324,43 @@ def evaluate(target: str, o: pd.DataFrame, cols=None, FD=None, family="logistic"
             "reliability": reliability(p_c if d_c < d_m else p_m, y, w)}, (p_m, p_c, y, w)
 
 
+REFIT = {"phi_athy", "lkit", "lkit_max", "lkit_gas", "mature"}  # inputs from physical models fitted on wells (temperature, porosity, burial)
+SURFACE_BASED = {"lclos", "lcharge", "lcharge_max", "p_charge", "p_charge_max"}  # from surfaces kriged on all wells (not refitted per fold)
+
+
+def refit_check(t: str, o: pd.DataFrame, cols: list, FD: list, family: str) -> dict:
+    """P12.2: the held-out gain with the physical inputs refitted inside each fold (temperature, porosity trend, burial and maturity
+    fitted without the fold's held-out wells), beside the gain with the shared fit. A drop would mean the shared fit leaked held-out
+    information into the inputs. Surface-based inputs are listed, not refitted (a surface fit per fold takes an hour per region)."""
+    use = [c for c in cols if c in REFIT]; out = {"refit_inputs": use, "surface_based_inputs_in_model": [c for c in cols if c in SURFACE_BASED]}
+    if not use:
+        return out | {"why": "no input of this model comes from a physical model fitted on wells"}
+    from se.earth.factors import at, maturity
+    from se.earth.grid import at_columns
+    from se.earth.poroperm import trend
+
+    s = np.load(EARTH / "surfaces.npz"); sea = s["mean"][list(s["names"]).index("SEABED")]
+    p0, p1 = np.zeros(len(o)), np.zeros(len(o))
+    for tr, te, Fa, Fb in FD:
+        a, b = o.iloc[tr], o.iloc[te]; held = set(b.wellbore); Fa2, Fb2 = Fa.copy(), Fb.copy()
+        if set(use) - {"phi_athy"}:
+            M = maturity(exclude=held); maps = {k: M[k].astype(np.float32) for k in ("p_oil", "p_gas", "p_max", "kit_oil", "kit_gas", "kit_max")}
+            for F2, q in ((Fa2, a), (Fb2, b)):
+                f = at(q, maps)
+                for c in use:
+                    if c in f:
+                        F2[c] = f[c].to_numpy()
+        if "phi_athy" in use:
+            for F2, q in ((Fa2, a), (Fb2, b)):
+                x, y = q.x.to_numpy(float), q.y.to_numpy(float)
+                F2["phi_athy"] = trend(x, y, q.zb.to_numpy(float), at_columns(sea, x, y), exclude=held) / 100
+        p0[te] = Model(cols, family).fit(Fa, a.ev.to_numpy(), a.w.to_numpy()).p(Fb)
+        p1[te] = Model(cols, family).fit(Fa2, a.ev.to_numpy(), a.w.to_numpy()).p(Fb2)
+    y, w = o.ev.to_numpy(), o.w.to_numpy(); d_g = deviance(np.full(len(o), np.average(y, weights=w)), y, w)
+    g0, g1 = 1 - deviance(p0, y, w) / d_g, 1 - deviance(p1, y, w) / d_g
+    return out | {"gain_shared_fit": round(g0, 4), "gain_refit_per_fold": round(g1, 4), "difference": round(g1 - g0, 4)}
+
+
 def completion_year() -> pd.Series:
     import duckdb
 
@@ -349,7 +387,19 @@ def time_test(target: str, o: pd.DataFrame, cols: list, families=("logistic",)) 
 
 
 # ---------------------------------------------------------------- realisations, support
-def monte_carlo(m: Model, F: pd.DataFrame, cal, n=N_MC, seed=0, cells=None, zsd=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def boot_models(t: str, o: pd.DataFrame, Fo: pd.DataFrame, cols: list, family: str, n=N_BOOT, seed=0) -> list:
+    """Refits on wells drawn with replacement (each well's rows keep their weight times its draw count): the spread of the coefficients
+    that the data allow. Combined with the input draws, the 90 percent range covers both (P12.3)."""
+    rng = np.random.default_rng(seed); wb = o.wellbore.to_numpy(); u, inv = np.unique(wb, return_inverse=True); out = []
+    for _ in range(n):
+        c = np.bincount(rng.integers(0, len(u), len(u)), minlength=len(u))[inv]; k = c > 0
+        if o.ev[k].nunique() < 2:
+            continue
+        out.append(Model(cols, family).fit(Fo[k], o.ev.to_numpy()[k], (o.w.to_numpy() * c)[k]))
+    return out
+
+
+def monte_carlo(m, F: pd.DataFrame, cal, n=N_MC, seed=0, cells=None, zsd=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Realisations of the uncertain inputs pushed through the fitted model; returns mean, p05, p95 per cell.
     Rates (unit prior, neighbours' rate) are drawn from their beta distribution, Beta(rate x count, (1 - rate) x count) with the
     shrinkage count, and enter as logits. P10.1 fix: the earlier normal noise on the logit (delta method) is far too wide for rare events
@@ -361,6 +411,7 @@ def monte_carlo(m: Model, F: pd.DataFrame, cal, n=N_MC, seed=0, cells=None, zsd=
     from se.earth.folds import device
     from se.earth.gp import prior_field
 
+    ms = m if isinstance(m, list) else [m]; m = ms[0]  # several models (bootstrap refits): draw k uses model k mod len
     rng = np.random.default_rng(seed); cols = m.cols; X0 = np.nan_to_num(F[cols].to_numpy(float))
     nl = m.family != "logistic"; n = min(n, N_MC_NL) if nl else n
     if cells is not None:
@@ -399,10 +450,9 @@ def monte_carlo(m: Model, F: pd.DataFrame, cal, n=N_MC, seed=0, cells=None, zsd=
         import torch
 
         T = lambda a: torch.as_tensor(a, dtype=torch.float32, device=device())
-        W, b0 = T(m.m.coef_[0]), float(m.m.intercept_[0])
-        P = np.stack([torch.sigmoid(T(m.scale(draw(k))) @ W + b0).cpu().numpy() for k in range(n)])
+        P = np.stack([torch.sigmoid(T(ms[k % len(ms)].scale(draw(k))) @ T(ms[k % len(ms)].m.coef_[0]) + float(ms[k % len(ms)].m.intercept_[0])).cpu().numpy() for k in range(n)])
     else:
-        P = np.stack([m.m.predict_proba(m.scale(draw(k)))[:, 1] for k in range(n)])
+        P = np.stack([ms[k % len(ms)].m.predict_proba(ms[k % len(ms)].scale(draw(k)))[:, 1] for k in range(n)])
     if cal is not None:
         P = np.stack([cal(p) for p in P])
     return P.mean(0), np.percentile(P, 5, axis=0), np.percentile(P, 95, axis=0)
@@ -503,7 +553,28 @@ def checks_co2(C, p, lg=None) -> dict:
 
 
 def build(targets=("hydrocarbons", "oil", "gas", "reservoir", "overpressure", "green_clay", "calcareous_clay", "sandy_delta")) -> dict:
-    t0 = time.time(); OUT_T.mkdir(parents=True, exist_ok=True)
+    """All targets, written into a staging folder that replaces <EARTH>/targets at the end (P12.4): the API never sees the cell table of one
+    run beside the target arrays of another. Outputs of later steps (gamma, volumes) are carried over only if they match the new grid."""
+    global OUT_T
+    final = EARTH / "targets"; n_new = len(cells())
+    def still_fits(p):
+        if p.suffix != ".npz":
+            return p.name.startswith(("gamma_ray", "co2_capacity")) and p.suffix == ".json"
+        z = np.load(p); k = "p" if "p" in z else "value"
+        return k in z and len(z[k]) == n_new
+    with atomic.staged(final, keep=still_fits) as stage:
+        OUT_T = stage
+        try:
+            rep = _build(targets)
+        finally:
+            OUT_T = final
+    manifest.write(final / "cells.parquet", [EARTH / "grid.npz", EARTH / "surfaces.npz", EARTH / "fluids.parquet", EARTH / "poroperm_wells.parquet", EARTH / "pressure_obs.parquet",
+                                             EARTH / "lithology_wells.parquet", OUT / "units.parquet"], {"ell_km": ELL, "k_unit": K_UNIT, "k_nb": K_NB, "n_mc": N_MC})
+    return rep
+
+
+def _build(targets) -> dict:
+    t0 = time.time()
     C = cells(); rep, P, S = {"_conditional_on": CONDITIONAL}, {}, {}
     s = np.load(EARTH / "surfaces.npz"); names = list(s["names"])  # depth sigma per cell: its group top's sd at the column (P10.3)
     gk = C.group.map({n: k for k, n in enumerate(names)}).fillna(-1).astype(int).to_numpy()
@@ -521,6 +592,7 @@ def build(targets=("hydrocarbons", "oil", "gas", "reservoir", "overpressure", "g
         fwd = tt.get("gain_by_family", {})
         better = [f for f in FAMILIES[1:] if fam[f] >= fam["logistic"] + FAMILY_MARGIN and (not fwd or fwd.get(f, -9) >= fwd.get("logistic", 9))]
         ev["family"] = family = max(better, key=fam.get) if better else "logistic"
+        ev["refit_check"] = refit_check(t, o, cols, FD, family)
         ev["families"] = {f: {"held_out": round(fam[f], 4), "forward_in_time": fwd.get(f)} for f in FAMILIES}
         if family != "logistic":
             ev, (p_m, p_c, y, w) = (lambda r: (r[0] | {k: ev[k] for k in ev if k not in r[0]}, r[1]))(evaluate(t, o, cols, FD, family=family))
@@ -540,7 +612,9 @@ def build(targets=("hydrocarbons", "oil", "gas", "reservoir", "overpressure", "g
             gains["model"] = -1.0; ev["model_rejected"] = f"forward-in-time gain {fw} <= 0"
         ev["published"] = pub = max(gains, key=gains.get)
         if pub == "model":
-            mean, lo, hi = monte_carlo(m, FC, cal, cells=C, zsd=zsd)
+            _, lo0, hi0 = monte_carlo(m, FC, cal, cells=C, zsd=zsd)  # inputs only, for the record
+            mean, lo, hi = monte_carlo([m] + boot_models(t, o, Fo, cols, family), FC, cal, n=max(N_MC, 2 * N_BOOT) if family == "logistic" else N_MC_NL, cells=C, zsd=zsd)
+            ev["range90_median"] = {"inputs_only": round(float(np.median(hi0 - lo0)), 4), "inputs_and_coefficients": round(float(np.median(hi - lo)), 4), "bootstrap_refits": N_BOOT}
         elif pub == "unit prior":
             mean = FC.prior.to_numpy(); sdp = np.sqrt(mean * (1 - mean) / (FC.n_unit.to_numpy() + K_UNIT)); lo, hi = np.clip(mean - 1.645 * sdp, 0, 1), np.clip(mean + 1.645 * sdp, 0, 1)
         else:
@@ -549,23 +623,23 @@ def build(targets=("hydrocarbons", "oil", "gas", "reservoir", "overpressure", "g
         P[t], S[t] = mean, sup
         ev["coefficients"] = m.coef()
         ev["cells"] = int(len(C)); ev["p_median"] = round(float(np.median(mean)), 4); ev["support_median"] = round(float(np.median(sup)), 3)
-        np.savez_compressed(OUT_T / f"{t}.npz", i=C.i.to_numpy(np.int16), j=C.j.to_numpy(np.int16), label=C.label.to_numpy(np.int16), p=mean.astype(np.float32),
+        atomic.savez(OUT_T / f"{t}.npz", i=C.i.to_numpy(np.int16), j=C.j.to_numpy(np.int16), label=C.label.to_numpy(np.int16), p=mean.astype(np.float32),
                             p05=lo.astype(np.float32), p95=hi.astype(np.float32), support=sup.astype(np.float32))
         rep[t] = ev
         print(t, {k: v for k, v in ev.items() if k not in ("reliability", "selection", "features_per_fold")}, round(time.time() - t0), "s", flush=True)
     from se.earth.factors import legacy
 
     lg = legacy(C)
-    np.savez_compressed(OUT_T / "legacy_wells.npz", value=lg.astype(np.float32), sd=np.zeros(len(C), np.float32))
+    atomic.savez(OUT_T / "legacy_wells.npz", value=lg.astype(np.float32), sd=np.zeros(len(C), np.float32))
     K = co2_terms(C); pc, info = co2(C, P, K)
-    np.savez_compressed(OUT_T / "co2_storage.npz", i=C.i.to_numpy(np.int16), j=C.j.to_numpy(np.int16), label=C.label.to_numpy(np.int16), p=pc.astype(np.float32),
+    atomic.savez(OUT_T / "co2_storage.npz", i=C.i.to_numpy(np.int16), j=C.j.to_numpy(np.int16), label=C.label.to_numpy(np.int16), p=pc.astype(np.float32),
                         p05=pc.astype(np.float32), p95=pc.astype(np.float32), support=np.minimum(S["reservoir"], S["overpressure"]).astype(np.float32))
     rep["co2_storage"] = {"composite": info, "calibrated": False, "why": "no well observes stored CO2", "checks": checks_co2(C, pc, lg), "cells": int(len(C)),
                           "p_median": round(float(np.median(pc)), 4),
                           "legacy_wells": {"what": f"wellbores within {2.0:g} km drilled through the unit (P9.3): each is a possible leak path; shown as evidence, not "
                                                     "multiplied in, because no data here gives a leak probability per well", "share_cells_with_any": round(float((lg > 0).mean()), 3)}}
     cs, cinfo = cos(C, P, K, zsd)
-    np.savez_compressed(OUT_T / "chance_of_success.npz", i=C.i.to_numpy(np.int16), j=C.j.to_numpy(np.int16), label=C.label.to_numpy(np.int16), p=cs["p"].astype(np.float32),
+    atomic.savez(OUT_T / "chance_of_success.npz", i=C.i.to_numpy(np.int16), j=C.j.to_numpy(np.int16), label=C.label.to_numpy(np.int16), p=cs["p"].astype(np.float32),
                         p05=cs["p"].astype(np.float32), p95=cs["p"].astype(np.float32), support=S["hydrocarbons"].astype(np.float32),
                         **{e: cs[e].astype(np.float32) for e in ELEMENTS}, limit=cs["limit"].astype(np.int8))
     rep["chance_of_success"] = {"composite": cinfo, "calibrated": False, "why": "a product of geological elements, as explorers risk a prospect; checked against hydrocarbons",
@@ -573,9 +647,7 @@ def build(targets=("hydrocarbons", "oil", "gas", "reservoir", "overpressure", "g
                                 "limiting_share": {e: round(float((cs["limit"] == k).mean()), 3) for k, e in enumerate(ELEMENTS)}}
     C["T_C"], C["seal_m"], C["w_co2"], C["zsd"] = K["T"], K["seal_m"], K["p_T"] * K["p_P"] * K["p_seal"] * (1 - P["overpressure"]), zsd
     C[["i", "j", "x", "y", "label", "unit", "group", "top", "base", "thick", "zb", "sand", "T_C", "seal_m", "w_co2", "zsd"]].to_parquet(OUT_T / "cells.parquet")
-    (OUT_T / "report.json").write_text(json.dumps(rep, indent=1, default=float))
-    manifest.write(OUT_T / "cells.parquet", [EARTH / "grid.npz", EARTH / "surfaces.npz", EARTH / "fluids.parquet", EARTH / "poroperm_wells.parquet", EARTH / "pressure_obs.parquet",
-                                             EARTH / "lithology_wells.parquet", OUT / "units.parquet"], {"ell_km": ELL, "k_unit": K_UNIT, "k_nb": K_NB, "n_mc": N_MC})
+    atomic.write_json(OUT_T / "report.json", rep, indent=1, default=float)
     rep["_seconds"] = round(time.time() - t0, 1)
     return rep
 

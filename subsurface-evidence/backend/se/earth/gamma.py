@@ -13,7 +13,7 @@ import pandas as pd
 from sklearn.model_selection import GroupKFold
 
 from se.config import EARTH
-from se.earth import manifest
+from se.earth import atomic, manifest
 from se.earth.folds import blocks
 
 ELL, K = 20.0, 3.0
@@ -57,12 +57,12 @@ def build() -> dict:
     sigma = float(np.percentile(np.abs(e_m), 90) / 1.645)
     C = pd.read_parquet(EARTH / "targets" / "cells.parquet")
     gr = estimate(g, C)
-    np.savez_compressed(EARTH / "targets" / "gamma_ray.npz", value=gr.astype(np.float32), sd=np.full(len(C), sigma, np.float32))
+    atomic.savez(EARTH / "targets" / "gamma_ray.npz", value=gr.astype(np.float32), sd=np.full(len(C), sigma, np.float32))
     out = {"well_units": int(len(g)), "wells": int(g.wellbore.nunique()), "units": int(g.unit.nunique()), "rmse_model_gAPI": rm(e_m), "rmse_unit_mean_gAPI": rm(e_u),
            "rmse_pilot_mean_gAPI": rm(e_g), "sigma_gAPI": round(sigma, 1), "cells": int(len(C)), "ell_km": ELL, "k": K,
            "what": "unit-mean gamma ray per cell (not a log at 10 m resolution); within-unit variation shown as the wells' mean within-unit sd",
            "within_unit_sd_median_gAPI": round(float(g.gr_sd.median()), 1)}
-    (EARTH / "targets" / "gamma_ray_report.json").write_text(json.dumps(out, indent=1))
+    atomic.write_json(EARTH / "targets" / "gamma_ray_report.json", out, indent=1)
     manifest.write(EARTH / "targets" / "gamma_ray.npz", [EARTH / "targets" / "cells.parquet"], {"ell_km": ELL, "k": K})
     return out
 

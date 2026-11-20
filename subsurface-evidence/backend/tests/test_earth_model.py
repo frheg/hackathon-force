@@ -186,3 +186,51 @@ def test_export_formats_have_the_right_sizes():
     ir = irap(z, x, y).split("\n"); assert ir[0] == "-996 3 1000.000000 1000.000000" and sum(len(l.split()) for l in ir[4:]) == 12 and "9999900.0000" in ir[4]
     zm = zmap(z, x, y, "t"); body = zm.split("@\n")[-1]; assert len(body.split()) == 12 and "1.0E+30" in body
     k = _kw("ACTNUM", np.ones(10, int), "{:d}"); assert k.startswith("ACTNUM\n") and k.strip().endswith("/") and len(k.split()) == 12
+
+
+# ---------------------------------------------------------------- P12 (LOG L078)
+def test_staged_folder_swaps_whole_and_keeps_matching_files(tmp_path):
+    from se.earth import atomic
+
+    final = tmp_path / "targets"; final.mkdir(); (final / "old_target.npz").write_text("old"); (final / "gamma_ray.npz").write_text("keep me")
+    with atomic.staged(final, keep=lambda p: p.name.startswith("gamma")) as st:
+        (st / "new_target.npz").write_text("new")
+        assert (final / "old_target.npz").exists()  # readers still see the complete old folder while the new one is written
+    names = sorted(p.name for p in final.iterdir())
+    assert names == ["gamma_ray.npz", "new_target.npz"] and not (tmp_path / "targets.staging").exists() and not (tmp_path / "targets.old").exists()
+    try:
+        with atomic.staged(final) as st:
+            (st / "half.npz").write_text("x"); raise RuntimeError("step failed")
+    except RuntimeError:
+        pass
+    assert sorted(p.name for p in final.iterdir()) == names  # a failed step leaves the old artefacts untouched
+
+
+def test_atomic_files_never_half_written(tmp_path):
+    from se.earth import atomic
+
+    p = tmp_path / "a.json"; atomic.write_json(p, {"x": 1}); atomic.savez(tmp_path / "b.npz", v=np.arange(3))
+    assert p.read_text().strip().startswith("{") and list(np.load(tmp_path / "b.npz")["v"]) == [0, 1, 2]
+    assert not [q for q in tmp_path.iterdir() if q.name.endswith(".tmp")]
+
+
+def test_bootstrap_refits_vary_the_coefficients():
+    from se.earth.targets import Model, boot_models
+
+    rng = np.random.default_rng(1); n = 300
+    o = pd.DataFrame({"wellbore": [f"w{i % 60}" for i in range(n)], "ev": (rng.random(n) < 0.3).astype(float), "w": 1.0})
+    F = pd.DataFrame({"a": rng.normal(size=n) + o.ev, "b": rng.normal(size=n)})
+    ms = boot_models("t", o, F, ["a", "b"], "logistic", n=20)
+    c = np.array([m.m.coef_[0] for m in ms])
+    assert len(ms) >= 15 and c[:, 0].std() > 0.01 and (c[:, 0] > 0).mean() > 0.8  # the signal survives resampling, its size varies
+
+
+@pytest.mark.skipif(not (__import__("se.config", fromlist=["DATA"]).DATA / "sodir" / "factmaps" / "blocks.geojson").exists(), reason="Sodir blocks not downloaded")
+def test_the_model_stays_on_the_norwegian_shelf():
+    """Owner question (Garn Formation under mainland Norway and Sweden): the grid mask keeps only the offshore NCS."""
+    from se.earth.shelf import mask
+    from se.evidence.spatial import project
+
+    for lon, lat, want in ((3.0, 60.5, True), (10.75, 59.91, False), (14.5, 63.2, False), (1.0, 57.0, False)):  # Troll area; Oslo; Sweden (Ostersund); UK sector
+        p = project([lon], [lat])[0]
+        assert bool(mask([p[0]], [p[1]])[0, 0]) is want, (lon, lat)

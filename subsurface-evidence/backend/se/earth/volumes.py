@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from se.config import DATA, EARTH
-from se.earth import manifest
+from se.earth import atomic, manifest
 
 RHO = DATA / "nist_co2" / "co2_density.csv"
 ATLAS = DATA / "sodir" / "co2_atlas" / "north_sea_aquifers.csv"
@@ -52,31 +52,45 @@ def porosity(C: pd.DataFrame) -> tuple[np.ndarray, float]:
     return np.clip(phi, 0, 45), float(r["sigma_phi_pct"])
 
 
-def build() -> dict:
+def realise(C, phi, sd_phi, rho, w, area, ntg_sd=NTG_SD, th_frac=0.5, eff=(E_P10, E_P50, E_P90), n=N_REAL) -> tuple[np.ndarray, pd.Index]:
+    """Capacity realisations (n x units, Mt) with correlated errors in porosity, net-to-gross and thickness and one efficiency draw per
+    unit. The constants are arguments so the sensitivity study (P12.1) can vary them."""
     from se.earth.folds import device
     from se.earth.gp import prior_field
 
-    C = pd.read_parquet(OUT_T / "cells.parquet")
-    phi, sd_phi = porosity(C)
-    np.savez_compressed(OUT_T / "porosity.npz", value=phi.astype(np.float32), sd=np.full(len(C), sd_phi, np.float32))
-    g = np.load(EARTH / "grid.npz"); area = float(np.diff(g["x"][:2])[0] * np.diff(g["y"][:2])[0]) * 1e6  # m2 per column
-    mid = 0.5 * (C.top + C.base).to_numpy(); P = 0.1013 + 0.00981 * 1.03 * mid; rho = rho_co2(C.T_C.to_numpy(), P)
-    th, ntg = C.thick.to_numpy(), np.clip(C.sand.fillna(0).to_numpy(), 0, 1); sd_th = 0.5 * C.zsd.to_numpy()
-    w = C.w_co2.to_numpy() * np.load(OUT_T / "reservoir.npz")["p"]
+    th, ntg = C.thick.to_numpy(), np.clip(C.sand.fillna(0).to_numpy(), 0, 1); sd_th = th_frac * C.zsd.to_numpy()
     col = pd.factorize(pd.Series(list(zip(C.i, C.j))))[0]; xy = C.groupby(col)[["x", "y"]].first().to_numpy()
     uid, units = pd.factorize(C.unit); nu = len(units)
-    Fp, Fn, Ft = (prior_field(xy, ell, N_REAL, seed=s, features=1000, device=device()) for ell, s in ((15.0, 1), (25.0, 2), (20.0, 3)))
-    rng = np.random.default_rng(0); s_ln = (np.log(E_P90) - np.log(E_P10)) / (2 * 1.2816)
-    cap = np.zeros((N_REAL, nu))
-    for k in range(N_REAL):
-        ph = np.clip(phi + sd_phi * Fp[col, k], 0, 45) / 100; ng = np.clip(ntg + NTG_SD * Fn[col, k], 0, 1); t_ = np.maximum(th + sd_th * Ft[col, k], 0)
-        E = np.exp(np.log(E_P50) + s_ln * rng.standard_normal(nu))[uid]
+    Fp, Fn, Ft = (prior_field(xy, ell, n, seed=s, features=1000, device=device()) for ell, s in ((15.0, 1), (25.0, 2), (20.0, 3)))
+    rng = np.random.default_rng(0); s_ln = (np.log(eff[2]) - np.log(eff[0])) / (2 * 1.2816)
+    cap = np.zeros((n, nu))
+    for k in range(n):
+        # thickness varies multiplicatively (lognormal, mean kept): clipping a normal draw at zero biased every total upwards, more so for a
+        # larger sigma (found by the sensitivity study, P12.1: Barents P50 88 -> 155 Gt as the sigma doubled)
+        sr = np.minimum(sd_th / np.maximum(th, 1.0), 1.0); t_ = th * np.exp(sr * Ft[col, k] - sr ** 2 / 2)
+        ph = np.clip(phi + sd_phi * Fp[col, k], 0, 45) / 100; ng = np.clip(ntg + ntg_sd * Fn[col, k], 0, 1)
+        E = np.exp(np.log(eff[1]) + s_ln * rng.standard_normal(nu))[uid]
         cap[k] = np.bincount(uid, area * t_ * ng * ph * rho * E * w, minlength=nu) / 1e9  # Mt
+    return cap, units
+
+
+def inputs(C):
+    g = np.load(EARTH / "grid.npz"); area = float(np.diff(g["x"][:2])[0] * np.diff(g["y"][:2])[0]) * 1e6  # m2 per column
+    mid = 0.5 * (C.top + C.base).to_numpy(); P = 0.1013 + 0.00981 * 1.03 * mid
+    return area, rho_co2(C.T_C.to_numpy(), P), C.w_co2.to_numpy() * np.load(OUT_T / "reservoir.npz")["p"]
+
+
+def build() -> dict:
+    C = pd.read_parquet(OUT_T / "cells.parquet")
+    phi, sd_phi = porosity(C)
+    atomic.savez(OUT_T / "porosity.npz", value=phi.astype(np.float32), sd=np.full(len(C), sd_phi, np.float32))
+    area, rho, w = inputs(C); th, ntg = C.thick.to_numpy(), np.clip(C.sand.fillna(0).to_numpy(), 0, 1)
+    cap, units = realise(C, phi, sd_phi, rho, w, area); uid = pd.factorize(C.unit)[0]; nu = len(units)
     bulk = np.bincount(uid, area * th, minlength=nu); pore = np.bincount(uid, area * th * ntg * phi / 100, minlength=nu)
     dens = np.bincount(uid, area * th * ntg * phi / 100 * rho, minlength=nu) / np.maximum(pore, 1)
     elig = np.bincount(uid, area * th * ntg * phi / 100 * w, minlength=nu) / np.maximum(pore, 1)
     mean_cell = area * th * ntg * phi / 100 * rho * E_P50 * w / 1e6  # kt per cell at the median efficiency
-    np.savez_compressed(OUT_T / "co2_capacity.npz", value=mean_cell.astype(np.float32), sd=np.zeros(len(C), np.float32))
+    atomic.savez(OUT_T / "co2_capacity.npz", value=mean_cell.astype(np.float32), sd=np.zeros(len(C), np.float32))
     per = pd.DataFrame({"unit": units, "bulk_km3": bulk / 1e9, "pore_volume_rm3": pore, "pore_over_bulk": pore / np.maximum(bulk, 1), "density_t_rm3": dens / 1000,
                         "eligible_share": elig, "p10_mt": np.percentile(cap, 10, axis=0), "p50_mt": np.percentile(cap, 50, axis=0), "p90_mt": np.percentile(cap, 90, axis=0)})
     per = per[per.p90_mt > 0.5].sort_values("p50_mt", ascending=False)
@@ -98,7 +112,7 @@ def build() -> dict:
            "total_mt": {"p10": round(float(np.percentile(cap.sum(1), 10))), "p50": round(float(np.percentile(cap.sum(1), 50))), "p90": round(float(np.percentile(cap.sum(1), 90)))},
            "units": per.head(15).round(4).to_dict("records"), "atlas": atlas, "porosity_sigma_pct": sd_phi,
            "caveat": "atlas aquifer outlines differ from the region box: compare pore/bulk and density directly, totals only as orders of magnitude"}
-    (OUT_T / "co2_capacity.json").write_text(json.dumps(out, indent=1, default=float))
+    atomic.write_json(OUT_T / "co2_capacity.json", out, indent=1, default=float)
     manifest.write(OUT_T / "co2_capacity.npz", [OUT_T / "cells.parquet", RHO, ATLAS], {"n_real": N_REAL, "E": [E_P10, E_P50, E_P90]})
     return out
 

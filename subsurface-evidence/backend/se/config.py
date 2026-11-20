@@ -51,10 +51,10 @@ def device() -> str:
 # Earth-model regions (PLAN P8). The pipeline runs for one region at a time: EARTH_REGION=<name>; artefacts in OUT/earth/<name>.
 # "PILOT" below is the active region's box (the code was written for the pilot; every module reads the box from here).
 REGIONS = {
-    "pilot": {"lat": (59.5, 61.5), "lon": (1.5, 4.5), "step_km": 2.0, "title": "Horda Platform, northern Viking Graben (pilot)"},
-    "north_sea_south": {"lat": (56.0, 59.5), "lon": (1.5, 7.5), "step_km": 3.0, "title": "Southern North Sea (Norwegian sector)"},
-    "norwegian_sea": {"lat": (62.0, 69.0), "lon": (2.0, 15.0), "step_km": 4.0, "title": "Norwegian Sea"},
-    "barents": {"lat": (69.5, 74.5), "lon": (15.0, 37.0), "step_km": 4.0, "title": "Barents Sea"},
+    "pilot": {"lat": (59.5, 61.5), "lon": (1.5, 4.5), "step_km": 2.0, "title": "Northern North Sea (Horda Platform)", "short": "Northern North Sea"},  # id "pilot": the first region built
+    "north_sea_south": {"lat": (56.0, 59.5), "lon": (1.5, 7.5), "step_km": 3.0, "title": "Southern North Sea (Norwegian sector)", "short": "Southern North Sea"},
+    "norwegian_sea": {"lat": (62.0, 69.0), "lon": (2.0, 15.0), "step_km": 4.0, "title": "Norwegian Sea", "short": "Norwegian Sea"},
+    "barents": {"lat": (69.5, 74.5), "lon": (15.0, 37.0), "step_km": 4.0, "title": "Barents Sea", "short": "Barents Sea"},
 }
 REGION = os.environ.get("EARTH_REGION", "pilot")
 PILOT = REGIONS[REGION]

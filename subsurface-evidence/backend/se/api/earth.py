@@ -32,7 +32,12 @@ def _r(a, d=1):
 
 @lru_cache(maxsize=4)
 def _surf(region="pilot"):
-    return dict(np.load(_dir(region) / "surfaces.npz"))
+    s = dict(np.load(_dir(region) / "surfaces.npz")); g = _dir(region) / "grid.npz"
+    if g.exists():  # the grid's mask: the region box and the offshore NCS (shelf.py), so no sheet is drawn over land
+        gi = np.load(g)["inside"]
+        if gi.shape == s["inside"].shape:
+            s["inside"] = s["inside"] & gi
+    return s
 
 
 @lru_cache(maxsize=4)
@@ -44,7 +49,11 @@ def _cells(region="pilot") -> pd.DataFrame:
 def _target(t: str, region="pilot") -> dict:
     if t not in TARGETS:
         raise HTTPException(404, "no such target")
-    return dict(np.load(_dir(region) / "targets" / f"{t}.npz"))
+    d = dict(np.load(_dir(region) / "targets" / f"{t}.npz"))
+    if len(d["p"]) != len(_cells(region)):  # written by a rebuild that has not finished: never mix two grids
+        _target.cache_clear(); _cells.cache_clear()
+        raise HTTPException(503, f"{region} is being rebuilt; retry in a few minutes")
+    return d
 
 
 @lru_cache(maxsize=4)
@@ -60,7 +69,7 @@ def regions():
         d = OUT / "earth" / r; built = (d / "targets" / "report.json").exists()
         rep = json.loads((d / "targets" / "report.json").read_text()) if built else {}
         run = json.loads((d / "run_report.json").read_text()) if (d / "run_report.json").exists() else {}
-        out.append({"id": r, "title": b["title"], "lat": b["lat"], "lon": b["lon"], "step_km": b["step_km"], "built": built,
+        out.append({"id": r, "title": b["title"], "short": b.get("short", b["title"]), "lat": b["lat"], "lon": b["lon"], "step_km": b["step_km"], "built": built,
                     "skill": {t: {k: rep[t].get(k) for k in ("gain_model_vs_base", "gain_unit_prior_vs_base", "published", "rows", "wells", "features")}
                               | {"forward_in_time": (rep[t].get("time_test") or {}).get("gain_selected_features")} for t in TARGETS if t in rep and t != "co2_storage"},
                     "steps": {k: v.get("status") for k, v in run.items() if isinstance(v, dict) and "status" in v}})
@@ -76,7 +85,10 @@ def _presets(region: str) -> dict:
         p = _dir(region) / "targets" / f"{t}.npz"
         if not p.exists():
             continue
-        v = np.load(p)["p"].astype(float); g = pd.DataFrame({"g": C.group.to_numpy(), "p": v}).groupby("g").p.agg(["mean", "size"])
+        v = np.load(p)["p"].astype(float)
+        if len(v) != len(C):  # the region is being rebuilt: this target is newer than the cell table
+            continue
+        g = pd.DataFrame({"g": C.group.to_numpy(), "p": v}).groupby("g").p.agg(["mean", "size"])
         out[t] = {"q90": round(float(np.percentile(v, 90)), 3), "q50": round(float(np.median(v)), 3), "top_groups": g[g["size"] >= 100].sort_values("mean", ascending=False).index[:3].tolist()}
     return out
 
@@ -306,3 +318,30 @@ def observed(t: str, region: str = "pilot", units: str = "", limit: int = 20000)
     o = o.sort_values("w", ascending=False).head(limit)
     return {"target": t, "n": int(len(o)), "x": _r(o.px, 2), "y": _r(o.py, 2), "top": _r(o.top_tvdss, 0), "base": _r(o.bot_tvdss, 0), "ev": _r(o.ev, 3), "w": _r(o.w, 2),
             "wellbore": o.wellbore.tolist(), "unit": o.unit.tolist()}
+
+
+@router.get("/rpt")
+def rpt(region: str = "pilot", limit: int = 8000):
+    """Rock physics template (P11.1): model lines (friable sand, contact cement; brine, oil, gas), the region's FORCE samples on it, and the
+    tests (this region's and pooled over all FORCE wells)."""
+    EARTH = _dir(region); rp = EARTH / "rpt_report.json"
+    if not rp.exists():
+        raise HTTPException(404, "no rock physics here: no FORCE wells with shear logs in this region")
+    rep = json.loads(rp.read_text()); d = pd.read_parquet(EARTH / "rpt_samples.parquet"); d = d.sample(min(limit, len(d)), random_state=0)
+    pool = OUT / "earth" / "rpt_pooled.json"
+    return {"template": rep.pop("template"), "report": rep, "pooled": json.loads(pool.read_text()) if pool.exists() else None,
+            "points": {k: (d[k].round(4).tolist() if d[k].dtype.kind == "f" else d[k].tolist()) for k in ("wellbore", "unit", "ai", "vpvs", "phi", "T", "cement", "dai", "valid", "lith", "tvdss")}}
+
+
+@router.get("/sensitivity")
+def sensitivity():
+    """P12.1: each untested constant set low and high, per built region; and the P12.2-P12.3 checks from the target reports."""
+    out = []
+    for r in REGIONS:
+        d = OUT / "earth" / r
+        if not (d / "sensitivity.json").exists():
+            continue
+        rep = json.loads((d / "targets" / "report.json").read_text()) if (d / "targets" / "report.json").exists() else {}
+        checks = {t: {"refit": rep[t].get("refit_check"), "range90": rep[t].get("range90_median")} for t in TARGETS if isinstance(rep.get(t), dict) and "refit_check" in rep[t]}
+        out.append({"region": r, "title": REGIONS[r]["title"], **json.loads((d / "sensitivity.json").read_text()), "checks": checks})
+    return out

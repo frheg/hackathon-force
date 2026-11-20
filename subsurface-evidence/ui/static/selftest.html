@@ -183,7 +183,7 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     $("#sv-inspect").click(); await sleep(500); ok("Close inspector removes both parts", !D().querySelector("#sec-insp") && !D().querySelector("#sec-inspc") && /Inspect seismic/.test($("#sv-inspect").textContent));
     // --- seven tabs; secondary pages under a sub-navigation; architecture charts with pan and zoom
     ok("the header has seven tabs (Subsurface model first; the 3D views are merged)", D().querySelectorAll("#links a").length === 7 && D().querySelector("#links a").dataset.p === "earth", [...D().querySelectorAll("#links a")].map((a) => a.textContent).join(", "));
-    F().location.hash = "layers"; await waitFor(() => D().querySelector(".subnav"), 30000);
+    F().location.hash = "layers"; await waitFor(() => D().querySelector(".doc .subnav"), 30000);
     ok("Layers opens under Validation with its sub-navigation", D().querySelector("#links a.on")?.dataset.p === "validation" && D().querySelector(".subnav a.on")?.textContent === "Layers");
     F().location.hash = "architecture"; await waitFor(() => D().querySelectorAll(".pz svg").length === 2, 60000);
     const pz = D().querySelector(".pz"), t0 = D().querySelector(".pzin").style.transform; pz.dispatchEvent(new (F().WheelEvent)("wheel", { deltaY: -100, clientX: 300, clientY: 200, bubbles: true, cancelable: true }));
@@ -206,12 +206,16 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     { ok("the model page has the seismic section and the inspector button", !!$("#sv-id") && !!$("#sv-inspect"));
       ok("observed-in-wells layer is drawn", !!(await waitFor(() => $("#pe").data.some((d) => d.name === "observed in wells"), 60000)));
       ok("map layers are drawn (coast, faults)", $("#pe").data.some((d) => d.meta?.hl === "map:faults") && $("#pe").data.some((d) => d.meta?.hl === "map:coast"));
-      ok("presets and the automatic threshold are there", $$("[data-pre]").length === 4 && !!$("#e-pa"));
+      ok("presets and the automatic threshold are there", D().querySelectorAll("[data-pre]").length === 4 && !!$("#e-pa"));
       const sel = $("#sv-id"); sel.value = sel.options[1]?.value || ""; fire(sel, "change");
       ok("a seismic section is drawn in the model", !!(await waitFor(() => $("#pe").data.some((d) => d.type === "surface" && d.name === sel.value), 90000)));
       $("#sv-inspect").click(); ok("the seismic inspector opens from the model page", !!(await waitFor(() => $("#si2d") || $("#siinfo"), 60000)));
-      $("#sv-inspect").click(); }
+      $("#sv-inspect").click();
+      { const r = D().querySelector('[name="sv-ax"][value="time"]'); r.checked = true; fire(r, "change"); ok("a seismic time slice is drawn, with its time and depth stated", !!(await waitFor(() => $("#pe").data.some((d) => d.type === "surface" && / t \d+ ms/.test(d.name || "")) && /ms two-way time/.test($("#sv-lab").textContent), 90000)), $("#sv-lab").textContent); }
+      { const r = D().querySelector('[name="sv-ax"][value="cube"]'); r.checked = true; fire(r, "change"); ok("the whole cube is drawn as see-through time slices with labelled edges", !!(await waitFor(() => $("#pe").data.filter((d) => d.type === "surface" && / t [\d.]+ ms/.test(d.name || "")).length >= 4 && $("#pe").data.some((d) => d.name === "seismic labels"), 120000)), $("#sv-lab").textContent); } }
     { F().location.hash = "earth/all"; ok("all regions side by side", !!(await waitFor(() => $("#pe") && $("#pe").data && $("#pe").data.some((d) => d.type === "scatter3d" && d.customdata) && /All \d regions/.test($(".minimap")?.textContent || ""), 180000))); }
+    { F().location.hash = "rpt/pilot"; ok("rock physics template: model lines and FORCE samples, with the cementation test", !!(await waitFor(() => $("#pr") && $("#pr").data && $("#pr").data.some((d) => d.name === "FORCE samples") && $("#pr").data.some((d) => /contact cement/.test(d.name || "")) && /Cementation/.test($("#sec-r-i")?.textContent || ""), 90000))); }
+    { F().location.hash = "sensitivity"; ok("the sensitivity page lists constants with their effect", !!(await waitFor(() => /Sensitivity and checks/.test($("#view").textContent) && D().querySelectorAll("#view table tr").length > 5, 60000))); }
   } catch (e) { R.push("ERROR " + e); }
   document.getElementById("out").textContent = R.join("\n") + "\nDONE";
 })();

@@ -120,3 +120,4 @@ label.lay{display:flex;padding:1px 3px;border-radius:4px}
 label.lay:hover{background:var(--faint)}
 .row.presets{flex-wrap:wrap;gap:4px}
 .row.presets .btn{font-size:12px;padding:2px 8px}
+.subnav.side{margin:4px 0 8px;display:flex;flex-wrap:wrap;gap:6px}

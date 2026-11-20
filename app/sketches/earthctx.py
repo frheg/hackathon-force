@@ -14,6 +14,8 @@ import pandas as pd
 from common import DATA_DIR as DATA
 
 EARTH = DATA / "subsurface-evidence" / "earth"
+NAMES = {"pilot": "Northern North Sea (Horda Platform)", "north_sea_south": "Southern North Sea", "norwegian_sea": "Norwegian Sea", "barents": "Barents Sea"}
+name = lambda r: NAMES.get(r, r.replace("_", " "))
 GENERIC = {"INTRA", "UPPER", "LOWER", "MIDDLE", "UNDIFFERENTIATED", "UNKNOWN"}
 TARGET_RULES = {"hydrocarbons": ["R-SEAL", "R-DRAUPNE", "R-MATURE", "R-MATURE-MAX", "R-CHARGE", "R-TRAP"], "reservoir": ["R-ATHY", "R-DPHI", "R-QTZ", "R-UPLIFT"],
                 "overpressure": ["R-HYD"], "co2_storage": ["R-CO2", "R-SEAL", "R-GEO", "R-HYD", "R-LEGACY", "R-SEABEDT", "R-SALT"], "sandy_delta": ["R-BRENT"]}
@@ -62,11 +64,11 @@ def method(region: str, target: str) -> dict | None:
             c = R["capacity"]; text += f" Region capacity P10/P50/P90 {c['total_mt']} Mt; atlas comparison: {[(a['aquifer'], a['atlas_capacity_gt'], a['our_capacity_at_atlas_E_gt']) for a in c['atlas']]} (atlas Gt, ours at the atlas efficiency, Gt); {c['caveat']}."
     else:
         tt = e.get("time_test") or {}
-        text = (f"{target} in {region}: published as {e.get('published')} (family {e.get('family', 'logistic')}); base rate {e.get('base_rate')} from {e.get('rows')} "
+        text = (f"{target} in {name(region)}: published as {e.get('published')} (family {e.get('family', 'logistic')}); base rate {e.get('base_rate')} from {e.get('rows')} "
                 f"unit observations in {e.get('wells')} wells. Held-out deviance gain over the base rate: nested {e.get('gain_nested')} (features chosen on the scored "
                 f"folds: {e.get('gain_selected_on_same_folds')}); unit prior alone {e.get('gain_unit_prior_vs_base')}; forward in time {tt.get('gain_selected_features')} "
                 f"on {tt.get('test_wells')} later wells. Inputs: {e.get('features')}. {('Model rejected: ' + e['model_rejected'] + '.') if e.get('model_rejected') else ''}")
-    return {"ref": f"M:method-{target}", "kind": "model", "document": f"Earth model · {region} · how {target} is computed and tested", "page": None,
+    return {"ref": f"M:method-{target}", "kind": "model", "document": f"Earth model · {name(region)} · how {target} is computed and tested", "page": None,
             "text": text + " " + METHOD["published"] + " " + METHOD["probability"] + " " + METHOD["support"], "excerpted": False}
 
 
@@ -89,7 +91,7 @@ def cell(region: str, target: str, k: int) -> dict | None:
         t.append(f"Petroleum system: nearest mature source {f['kit_oil'][j, i]:.0f} km ({f['kit_max'][j, i]:.0f} km at maximum burial); p(source below in oil window) "
                  f"{f['p_oil'][j, i]:.2f}; nearest mapped fault {f['fault_km'][j, i]:.0f} km; on a structural high: {bool(f['on_high'][j, i])}; closure on the unit top "
                  f"{f['closure'][li, j, i]:.0f} m; migrating oil reaches it with p {f['p_charge'][li, j, i]:.2f}." if "p_charge" in f else "")
-    return {"ref": "M:cell", "kind": "model", "document": f"Earth model · {region} · selected cell {k}", "page": None, "text": " ".join(x for x in t if x), "excerpted": False}
+    return {"ref": "M:cell", "kind": "model", "document": f"Earth model · {name(region)} · selected cell {k}", "page": None, "text": " ".join(x for x in t if x), "excerpted": False}
 
 
 def rules(region: str, target: str) -> list[dict]:
@@ -99,8 +101,8 @@ def rules(region: str, target: str) -> list[dict]:
         if not r:
             continue
         test = {k: v for k, v in r["test"].items() if k not in ("why",)}
-        out.append({"ref": f"M:{rid}", "kind": "rule", "document": f"Rule {rid} ({r['status']}) · tested on {region} wells", "page": None,
-                    "text": f"{r['statement']} Test verdict in {region}: {test.get('verdict')}. Numbers: {json.dumps({k: v for k, v in test.items() if k != 'verdict'})[:500]}. "
+        out.append({"ref": f"M:{rid}", "kind": "rule", "document": f"Rule {rid} ({r['status']}) · tested on {name(region)} wells", "page": None,
+                    "text": f"{r['statement']} Test verdict in {name(region)}: {test.get('verdict')}. Numbers: {json.dumps({k: v for k, v in test.items() if k != 'verdict'})[:500]}. "
                             f"Use: {r.get('use')}. Guard: {r.get('guard')}. Sources: {'; '.join(s['says'] for s in r['sources'])}", "excerpted": False})
     return out
 
@@ -128,8 +130,8 @@ def unit(region: str, target: str, name: str) -> dict | None:
         return None
     c = R["cells"]; cu = c[c.unit == name]
     rate = float(np.average(u.ev, weights=u.w))
-    return {"ref": f"M:unit-{re.sub(r'[^A-Za-z0-9]', '', name)}", "kind": "model", "document": f"Earth model · {region} · observations of {name}", "page": None,
-            "text": f"{name} in {region}: {target} observed in {len(u)} unit observations from {u.wellbore.nunique()} wells, weighted rate {rate:.3f} "
+    return {"ref": f"M:unit-{re.sub(r'[^A-Za-z0-9]', '', name)}", "kind": "model", "document": f"Earth model · {name(region)} · observations of {name}", "page": None,
+            "text": f"{name} in {NAMES.get(region, region)}: {target} observed in {len(u)} unit observations from {u.wellbore.nunique()} wells, weighted rate {rate:.3f} "
                     f"(region base rate {R['report'][target].get('base_rate') if target in R['report'] else None}). The unit fills {len(cu)} model cells, "
                     f"{cu.top.median():.0f} m TVDSS median top, {cu.thick.median():.0f} m median thickness.", "excerpted": False}
 

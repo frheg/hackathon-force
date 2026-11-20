@@ -154,6 +154,17 @@ Each factor is a rule in `earth.yaml` with a data test, and enters a model only 
 - [ ] **P10.12 Saved targets at vertical depth.** Convert the saved-target sheets and sticks to TVDSS with the frame, then fold them into the model page as a layer and retire the sub-view.
 - [ ] **P10.13 Cleaner filters on the other pages.** The model page sidebar is revamped (sections, descriptions, swatches, presets); Targets, Units and Validation still have their older controls.
 
+### P11 Rock physics (owner, 2026-11-20)
+- [x] **P11.1 Rock physics template on the FORCE wells.** (L077) Friable sand and contact cement with Gassmann brine, oil, gas; cement index and fluid signal per sample; tests R-RPT-CEMENT (agrees, pooled) and R-RPT-FLUID (not testable); view under Subsurface model.
+- [ ] **P11.2 Shear velocity where missing.** Greenberg-Castagna Vs prediction, tested on the 32 wells with shear logs, to extend the template.
+
+### P12 Close the gaps an expert would raise (owner, 2026-11-20)
+- [ ] **P12.1 Sensitivity of untested constants.** Each constant without a data test (kernel lengths, shrinkage counts, selection margin, oil-window temperature, trap floor, NTG and thickness sigmas, storage efficiency, support constants, correlation lengths) set low and high; what moves: held-out gain, published form, CoS test, CO2 totals, support. A tornado table per region.
+- [ ] **P12.2 Physical inputs refitted inside each fold.** Temperature, porosity trend, burial and the maturity factors fitted without the held-out wells; gain compared with the shared fit. Surface-based features: show whether any published model uses them.
+- [ ] **P12.3 Coefficient uncertainty.** Cluster-bootstrap refits (whole wells) combined with the input Monte Carlo; how much wider the 90 percent ranges get.
+- [ ] **P12.4 Atomic artefacts.** The targets step writes to a staging folder and swaps it in; single files by write-then-rename. No reader ever sees two grids.
+- [ ] **P12.5 Verify sources.** Every sourced_unverified reference resolved (Crossref for DOIs, the page for URLs): title, authors and year checked; status raised to sourced only with a quote read from the source.
+
 ## 5. Done for the pilot
 
 - Frame, structure and at least three properties pass their acceptance tests.

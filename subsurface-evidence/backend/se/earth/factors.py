@@ -27,7 +27,7 @@ from scipy.spatial import cKDTree
 from scipy.stats import norm as N
 
 from se.config import DATA, EARTH
-from se.earth import manifest
+from se.earth import atomic, manifest
 
 SOURCES = {"DRAUPNE FM", "MANDAL FM", "FARSUND FM", "TAU FM", "SPEKK FM", "HEKKINGEN FM", "ÅRE FM", "KOBBE FM"}
 T_OIL, T_GAS, FAR_KM, LEGACY_KM = 100.0, 150.0, 300.0, 2.0
@@ -141,20 +141,19 @@ def _kitchen(p, X, Y):
     return np.minimum(d.reshape(X.shape), FAR_KM)
 
 
-def build() -> dict:
-    from se.earth.grid import thickness_map
+def maturity(exclude=None) -> dict:
+    """Source maturity maps (p_oil, p_gas, p_max, kit_oil, kit_gas, kit_max, E) from the temperature model and the burial map; with
+    exclude, both fitted without those wellbores (P12.2: the maturity features of a fold use no held-out well)."""
     from se.earth.temperature import predict
 
     g, sea = _grid(); labels = [str(s).split("|") for s in g["labels"]]; lab, zb = g["label"], g["zb"].astype(np.float64)
     X, Y = np.meshgrid(g["x"], g["y"]); mid = 0.5 * (zb[:-1] + zb[1:]); dz = np.diff(zb, axis=0)
-    rp = json.loads((EARTH / "poroperm_report.json").read_text()) if (EARTH / "poroperm_report.json").exists() else {}
-    E = np.zeros(X.shape)
+    E = np.zeros(X.shape); gr = 0.0
     if (EARTH / "poroperm_wells.parquet").exists():
         from se.earth.poroperm import burial_map, gradient
 
-        E = np.clip(burial_map(pd.read_parquet(EARTH / "poroperm_wells.parquet"), X.ravel(), Y.ravel()).reshape(X.shape), 0, None); gr = gradient()
-    else:
-        gr = 0.0
+        pw = pd.read_parquet(EARTH / "poroperm_wells.parquet"); pw = pw[~pw.wellbore.isin(exclude)] if exclude else pw
+        E = np.clip(burial_map(pw, X.ravel(), Y.ravel()).reshape(X.shape), 0, None); gr = gradient()
     p_oil, p_gas, p_max = np.zeros(X.shape), np.zeros(X.shape), np.zeros(X.shape); found = {}
     for li, (gn, fn) in enumerate(labels):
         if fn not in SOURCES:
@@ -163,11 +162,20 @@ def build() -> dict:
         if not pres.any():
             continue
         zm = (mid * dz * m).sum(0) / np.maximum(th, 1e-9); zbm = np.maximum(zm - sea, 50.0)
-        T, sT = predict(X[pres], Y[pres], zbm[pres], sea[pres]); sT = np.maximum(sT, 1.0)
+        T, sT = predict(X[pres], Y[pres], zbm[pres], sea[pres], exclude=exclude); sT = np.maximum(sT, 1.0)
         for arr, t_, extra in ((p_oil, T_OIL, 0.0), (p_gas, T_GAS, 0.0), (p_max, T_OIL, gr * E[pres])):
             arr[pres] = np.maximum(arr[pres], 1 - N.cdf((t_ - (T + extra)) / sT))
         found[fn] = {"columns": int(pres.sum()), "T_median_C": round(float(np.median(T)), 1), "share_oil_window": round(float(np.mean(1 - N.cdf((T_OIL - T) / sT) >= 0.5)), 3)}
-    kit_oil, kit_gas, kit_max = _kitchen(p_oil, X, Y), _kitchen(p_gas, X, Y), _kitchen(p_max, X, Y)
+    return {"p_oil": p_oil, "p_gas": p_gas, "p_max": p_max, "kit_oil": _kitchen(p_oil, X, Y), "kit_gas": _kitchen(p_gas, X, Y), "kit_max": _kitchen(p_max, X, Y), "E": E, "found": found}
+
+
+def build() -> dict:
+    from se.earth.grid import thickness_map
+
+    g, sea = _grid(); labels = [str(s).split("|") for s in g["labels"]]; lab, zb = g["label"], g["zb"].astype(np.float64)
+    X, Y = np.meshgrid(g["x"], g["y"])
+    rp = json.loads((EARTH / "poroperm_report.json").read_text()) if (EARTH / "poroperm_report.json").exists() else {}
+    M = maturity(); p_oil, p_gas, p_max, kit_oil, kit_gas, kit_max, E, found = (M[k] for k in ("p_oil", "p_gas", "p_max", "kit_oil", "kit_gas", "kit_max", "E", "found"))
     fault_km = faults_tree().query(np.c_[X.ravel(), Y.ravel()])[0].reshape(X.shape)
     high = on_high(X.ravel(), Y.ravel()).reshape(X.shape)
     salt = thickness_map(lambda s: s.startswith("ZECHSTEIN GP")) / 1000
@@ -179,7 +187,7 @@ def build() -> dict:
             top = np.where(m, zb[:-1], np.inf).min(0); top = np.where(np.isfinite(top) & g["inside"], top, np.nan)
             clos[li], chg[li], pch[li] = migrate(top, p_oil, km2)
             _, chg_max[li], pch_max[li] = migrate(top, p_max, km2)
-    np.savez_compressed(EARTH / "factors.npz", x=g["x"], y=g["y"], p_oil=p_oil.astype(np.float32), p_gas=p_gas.astype(np.float32), p_max=p_max.astype(np.float32),
+    atomic.savez(EARTH / "factors.npz", x=g["x"], y=g["y"], p_oil=p_oil.astype(np.float32), p_gas=p_gas.astype(np.float32), p_max=p_max.astype(np.float32),
                         kit_oil=kit_oil.astype(np.float32), kit_gas=kit_gas.astype(np.float32), kit_max=kit_max.astype(np.float32), fault_km=fault_km.astype(np.float32),
                         on_high=high, salt_km=salt.astype(np.float32), closure=clos, labels=g["labels"], E=E.astype(np.float32),
                         charge=chg, charge_max=chg_max, p_charge=pch, p_charge_max=pch_max)
@@ -190,7 +198,7 @@ def build() -> dict:
            "salt_columns": int((salt[ins] > 0.05).sum()), "closure_cells_gt_20m": int((clos > 20).sum()),
            "share_unit_columns_charged": round(float((pch[clos >= 0] > 0.5).sum() / max(1, (chg >= 0).sum())), 3), "share_charged_at_max_burial": round(float((pch_max > 0.5).sum() / max(1, pch_max.size)), 3), "E_median_m": round(float(np.median(E[ins]))),
            "porosity_trend": rp.get("adopted_trend"), "T_oil_C": T_OIL, "T_gas_C": T_GAS}
-    (EARTH / "factors_report.json").write_text(json.dumps(out, indent=1))
+    atomic.write_json(EARTH / "factors_report.json", out, indent=1)
     manifest.write(EARTH / "factors.npz", [EARTH / "grid.npz", EARTH / "temperature_report.json", FM / "faults_and_boundaries.geojson", FM / "structural_elements.geojson"],
                    {"T_oil": T_OIL, "T_gas": T_GAS})
     return out
@@ -199,11 +207,12 @@ def build() -> dict:
 _F = {}
 
 
-def at(q: pd.DataFrame) -> pd.DataFrame:
-    """Factor features at rows with x, y (3035 km) and unit: nearest column; closure of the row's unit (0 if the unit is not there)."""
+def at(q: pd.DataFrame, maps: dict | None = None) -> pd.DataFrame:
+    """Factor features at rows with x, y (3035 km) and unit: nearest column; closure of the row's unit (0 if the unit is not there).
+    maps: replacement maps (a fold's maturity(), P12.2)."""
     if "f" not in _F or _F["path"] != EARTH:
         _F.update(f=dict(np.load(EARTH / "factors.npz")), path=EARTH)
-    f = _F["f"]; x, y = q.x.to_numpy(float), q.y.to_numpy(float)
+    f = _F["f"] if not maps else {**_F["f"], **maps}; x, y = q.x.to_numpy(float), q.y.to_numpy(float)
     i = np.abs(f["x"][None] - x[:, None]).argmin(1); j = np.abs(f["y"][None] - y[:, None]).argmin(1)
     li = {}
     for k, s in enumerate(f["labels"]):
