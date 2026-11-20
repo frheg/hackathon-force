@@ -216,16 +216,16 @@ function panZoom(box) {
 const MAXF = 30;  // formations shown at once in the 3D view: a guard on draw time, not a data limit
 let TIED = null;  // tied seismic horizons, fetched once
 // a small map of the Norwegian shelf in a corner of the stage, with the area in view as a box (equirectangular, cos-latitude scaled)
-async function minimap(host, box, label) {
-  const L0 = -4, L1 = 32, B0 = 55.5, B1 = 72.5, W = 180, k = Math.cos((64 * Math.PI) / 180), H = Math.round((W * (B1 - B0)) / ((L1 - L0) * k));
+async function minimap(host, box, label) {  // box: {lat, lon}, or a list of them (all regions: one box each)
+  const L0 = -4, L1 = 38, B0 = 55.5, B1 = 75, W = 180, k = Math.cos((64 * Math.PI) / 180), H = Math.round((W * (B1 - B0)) / ((L1 - L0) * k));
   const px = (lo) => ((lo - L0) / (L1 - L0)) * W, py = (la) => H - ((la - B0) / (B1 - B0)) * H;
   const lines = (await coast()).map((ln) => ln.filter(([lo, la]) => lo > L0 - 2 && lo < L1 + 2 && la > B0 - 2 && la < B1 + 2).map(([lo, la]) => `${px(lo).toFixed(1)},${py(la).toFixed(1)}`).join(" ")).filter((s) => s.length);
-  const [la0, la1] = box.lat, [lo0, lo1] = box.lon;
+  const boxes = Array.isArray(box) ? box : [box];
   let el = host.querySelector(".minimap"); if (!el) { el = document.createElement("div"); el.className = "minimap"; host.appendChild(el); }
   el.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of the Norwegian shelf with the area in view"><title>${esc(label)}</title>
     ${lines.map((p) => `<polyline points="${p}" fill="none" stroke="var(--mut)" stroke-width="0.7"/>`).join("")}
     ${[62, 69].map((la) => `<line x1="0" x2="${W}" y1="${py(la)}" y2="${py(la)}" stroke="var(--rule)" stroke-dasharray="2,2"/>`).join("")}
-    <rect x="${px(lo0)}" y="${py(la1)}" width="${px(lo1) - px(lo0)}" height="${py(la0) - py(la1)}" fill="rgba(224,33,138,0.25)" stroke="#e0218a" stroke-width="1.5"/>
+    ${boxes.map(({ lat: [la0, la1], lon: [lo0, lo1] }) => `<rect x="${px(lo0)}" y="${py(la1)}" width="${px(lo1) - px(lo0)}" height="${py(la0) - py(la1)}" fill="rgba(224,33,138,0.25)" stroke="#e0218a" stroke-width="1.5"/>`).join("")}
     <text x="4" y="${H - 4}" font-size="9" fill="var(--mut)">North Sea · Norwegian Sea (62°N) · Barents Sea (69°N)</text></svg><div class="tip">${esc(label)}</div>`;
 }
 // layer colours: distinct, muted enough to sit under the viridis cells; one per group or formation, the same in the list and the scene
@@ -823,7 +823,7 @@ const PAGES = {
     }
     REDRAW.scene = draw; await draw();
     { const la = [Math.min(...MS.map((m) => m.pilot.lat[0])), Math.max(...MS.map((m) => m.pilot.lat[1]))], lo = [Math.min(...MS.map((m) => m.pilot.lon[0])), Math.max(...MS.map((m) => m.pilot.lon[1]))];
-      minimap($(".plotwrap"), { lat: la, lon: lo }, ALL ? `All ${REG.length} regions: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E` : `${M.pilot.title}: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E`); }
+      minimap($(".plotwrap"), ALL ? MS.map((m) => ({ lat: m.pilot.lat, lon: m.pilot.lon })) : { lat: la, lon: lo }, ALL ? `All ${REG.length} regions: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E` : `${M.pilot.title}: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E`); }
     $("#e-r").onchange = (e) => { location.hash = "earth/" + e.target.value; };
   },
 
