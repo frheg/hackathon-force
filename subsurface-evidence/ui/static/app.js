@@ -21,11 +21,12 @@ const note = (title, ...l) => `<div class="note"><b>${title}</b>${l.map((x) => `
 const STATUS_WORDS = { helps: "helps", no_evidence: "no measurable help", hurts: "makes it worse", not_built: "not built / no data" };
 const evTip = (l) => { const e = l.evidence; if (!e) return l.status === "not_built" ? "Nothing to test: no code or no data for this evidence." : ""; const verb = l.status === "helps" ? "improved" : l.status === "hurts" ? "worsened" : "did not measurably change";
   return `On wells held out of fitting, adding this ${verb} prediction accuracy by ${sg(e.delta_gain)} (90% range ${sg(e.p05)} to ${sg(e.p95)}), compared with ${e.compared_with}${e.units ? `, on ${e.units} units` : ""}. Range entirely above 0 = helps; spanning 0 = no evidence; entirely below 0 = worse.`; };
-const NAV = [["screen", "Smeaheia"], ["tracks", "Well tracks"], ["research", "Research"], ["log", "Decision log"]];
+const NAV = [["earth", "Subsurface model"], ["screen", "Smeaheia"], ["targets", "Targets"], ["validation", "Validation"], ["about", "About"]];  // the 3D model is home
 // secondary pages live under one tab each, reached by the sub-navigation at the top of that tab (old links keep working)
-const SUB = { earth: [["earth", "Model"], ["rpt", "Rock physics"], ["scene", "Saved targets (depth along the hole)"]], units: [["units", "All units"], ["contradictions", "Most surprising"]], validation: [["validation", "Scorecard"], ["layers", "Layers"], ["knowledge", "Geology rules"], ["sensitivity", "Sensitivity"]],
-  data: [["data", "Catalog"], ["lineage", "Lineage"], ["workflows", "Other tools"]], architecture: [["architecture", "Charts"], ["start", "Overview and terms"]] };
-const PARENT = Object.fromEntries(Object.entries(SUB).flatMap(([k, v]) => v.map(([p]) => [p, k]))); PARENT.unit = "units";
+const SUB = { earth: [["earth", "Model"], ["rpt", "Rock physics"], ["jeham", "Nature's Plug"], ["scene", "Saved targets (depth along the hole)"]], screen: [["screen", "Evidence review"], ["tracks", "Well tracks"]],
+  targets: [["targets", "Target builder"], ["units", "Well intervals"], ["contradictions", "Most surprising"]], validation: [["validation", "Scorecard"], ["layers", "Layers"], ["knowledge", "Geology rules"], ["sensitivity", "Sensitivity"]],
+  about: [["start", "Overview and terms"], ["architecture", "Charts"], ["data", "Data catalog"], ["lineage", "Lineage"], ["workflows", "Other tools"], ["log", "Decision log"]] };
+const PARENT = Object.fromEntries(Object.entries(SUB).flatMap(([k, v]) => v.map(([p]) => [p, k]))); PARENT.unit = "targets";
 // Colour palettes for shares (low to high). `stops` colour sheets, map shading and legends; `bins` colour the four stick classes (the last is the strongest: above the colour range).
 const PALS = {
   blue: { name: "Blue (soft)", stops: [[0, "#c6dbef"], [0.4, "#6baed6"], [0.7, "#2171b5"], [1, "#08306b"]], bins: ["#9ecae1", "#4292c6", "#08519c", "#d95f02"] },
@@ -157,11 +158,13 @@ const job = async () => { const j = await api("last_job"); $("#job").textContent
 let routeSeq = 0;
 const pageError = (e) => doc(`<div class="note warn"><b>Could not load this page</b><pre>${esc(String(e.stack || e).slice(0, 900))}</pre></div>`);
 async function route() {
-  const [p, ...rest] = (location.hash.slice(1) || "screen").split("/");
+  const [p, ...rest] = (location.hash.slice(1) || "earth").split("/");
+  if (p === "about") { location.hash = "start"; return; }  // a tab, not a page: its first sub-page
+  if (p === "research") { location.hash = "earth"; return; }  // the former static hub: its pages are sub-pages of the tabs now
   const seq = ++routeSeq, live = () => seq === routeSeq;
   stageObserver?.disconnect(); closeDesk(); REDRAW.scene = REDRAW.insp = null;
   document.querySelectorAll("#links a").forEach((a) => {
-    const selected = a.dataset.p === (["screen","log","tracks"].includes(p) ? p : "research");
+    const selected = a.dataset.p === (PARENT[p] || p);
     a.classList.toggle("on", selected);
     if (selected) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
@@ -464,15 +467,15 @@ const PAGES = {
       ["elements", "structural elements (Sodir)", "#5b7fa6", "line"], ["names", "structural element names", "#5b7fa6", "text"], ["surveys", "seismic survey outlines", "#c99a06", "line"],
       ["plug", "Nature's Plug verdicts (Jeham): green pass, red fail; filled = own logs, open = taken from the nearest log well within 10 km", "linear-gradient(90deg,#1a9850 50%,#d73027 50%)", "fill"]];
     // settings survive a change of region or target (owner: changing the region reset everything); remembered per browser
-    const SAVE = "earth:settings", sv = (() => { try { return JSON.parse(localStorage.getItem(SAVE) || "{}"); } catch { return {}; } })(), PRE = M.presets || {};
+    const SAVE = "earth:settings:v2", sv = (() => { try { return JSON.parse(localStorage.getItem(SAVE) || "{}"); } catch { return {}; } })(), PRE = M.presets || {};
     const sugg = (t) => ["SEABED", ...(PRE[t]?.top_groups || [])].filter((g) => groups.includes(g));  // the groups where the target is most likely
     const autoP = (t) => Math.max(0.05, Math.min(0.95, Math.round((PRE[t]?.q90 ?? 0.5) * 20) / 20));  // top 10 percent of cells, not a fixed 0.5
-    const st = { colour: "p", t: "hydrocarbons", pmin: 0.5, pauto: true, smin: 0.0, fade: true, weak: false, wells: true, obs: true, tied: false, ex: ALL ? 30 : 8, seq: 0, cam: null, ...sv, map: new Set(sv.map || ["coast", "grid", "faults", "elements"]),
+    const st = { colour: "p", t: "hydrocarbons", pmin: 0.5, pauto: true, smin: 0.0, fade: true, weak: false, wells: true, obs: false, tied: false, gc: false, ex: ALL ? 30 : 8, seq: 0, cam: null, ...sv, map: new Set(sv.map || ["coast"]),  // bare defaults: coast only
       sv: { id: "", axis: "inline", pos: 0.5, v: 2.0, gain: 1, base: "", ck: "" } };
     if (!M.targets.some((t) => t.id === st.t)) st.t = "hydrocarbons";
     st.show = new Set((sv.show || sugg(st.t)).filter((g) => LAYN.includes(g))); if (!st.show.size) st.show = new Set(sugg(st.t));
     if (st.pauto) st.pmin = autoP(st.t);
-    const keep = () => { try { localStorage.setItem(SAVE, JSON.stringify({ colour: st.colour, t: st.t, pmin: st.pmin, pauto: st.pauto, smin: st.smin, fade: st.fade, weak: st.weak, wells: st.wells, obs: st.obs, tied: st.tied, ex: st.ex, map: [...st.map], show: [...st.show] })); } catch {} };
+    const keep = () => { try { localStorage.setItem(SAVE, JSON.stringify({ colour: st.colour, t: st.t, pmin: st.pmin, pauto: st.pauto, smin: st.smin, fade: st.fade, weak: st.weak, wells: st.wells, obs: st.obs, tied: st.tied, gc: st.gc, ex: st.ex, map: [...st.map], show: [...st.show] })); } catch {} };
     const tgt = (id, m = M) => m.targets.find((t) => t.id === id);
     const desk = stage2('<div class="fill" id="pe"></div>', () => {
       const r = st.selection?.region || REG[0];
@@ -480,7 +483,7 @@ const PAGES = {
         earth_wellbore: st.selection?.well || "", earth_target: st.t, cell: st.selection?.cell ?? null, probability_at_least: st.pmin, formations: [...st.show].slice(0, 30), depth_reference: "sea" };
     });
     const isComposite = (t) => ["co2_storage", "chance_of_success"].includes(t);
-    const PRESET = [["oil", "Oil and gas prospects", "hydrocarbons"], ["res", "Reservoir quality", "reservoir"], ["co2", "CO2 storage", "co2_storage"], ["op", "Drilling hazard", "overpressure"]];
+    const PRESET = [["oil", "Oil and gas prospects", "hydrocarbons"], ["res", "Reservoir quality", "reservoir"], ["co2", "CO2 storage", "co2_storage"], ["op", "Drilling hazard", "overpressure"], ["clay", "Clay barrier (Nature's Plug)", null]];
     const COLS = [["Target", [["p", "probability of the target"]]], ["Properties between wells", [["po", "porosity (%)"], ["gr", "gamma ray (gAPI)"]]], ["CO2 storage", [["cc", "capacity (kt per cell)"], ["lw", "nearby legacy wells (screening)"]]]];
     const CDESC = { p: "Colour = the target's probability (published form: model, unit rate or base rate); faint dots have little data behind them.", po: "Colour = estimated porosity, the compaction trend plus the unit's offset and nearby wells.",
       gr: "Colour = estimated gamma ray per unit: low is sand-like, high is shale-like. Only regions with FORCE log wells.", cc: "Colour = expected CO2 capacity of the cell at the median storage efficiency.", lw: "Nearby wellheads that reach below the cell top; not proven intersections or leaks." };
@@ -500,6 +503,7 @@ const PAGES = {
       <div class="row"><label class="chk"><input type="checkbox" id="e-weak" ${st.weak ? "checked" : ""}> include cells with near-zero support</label></div>
       <div class="row"><label class="chk"><input type="checkbox" id="e-f" ${st.fade ? "checked" : ""}> fade cells with little support</label></div><p id="e-n" class="tip"></p>`, true);
     sec("L", "e-s", "Strata (group tops)", `<p class="tip" style="margin:2px 0">A group fills the space down to the next top. Point at a name to pick out its sheet · <button class="lnk" id="e-sug" type="button">suggested</button> · <button class="lnk" id="e-none" type="button">none</button> · <button class="lnk" id="e-all" type="button">all</button></p>
+      <label class="chk lay" data-hl="greenclay"><input type="checkbox" id="e-gc" ${st.gc ? "checked" : ""}>${swatch("#7a9a3a")} Green Clay top and base (Jeham's relation on our surfaces)</label>
       <div id="e-g">${groups.map((g) => `<label class="chk lay" data-hl="${esc(g)}"><input type="checkbox" data-g="${esc(g)}" ${st.show.has(g) ? "checked" : ""}>${swatch(gcol(g))} ${esc(g)}</label>`).join("")}
       ${fms.length ? `<details style="margin-top:4px"><summary class="tip">Formation tops (${fms.length})</summary>${fms.map((g) => `<label class="chk lay" data-hl="${esc(g)}"><input type="checkbox" data-g="${esc(g)}" ${st.show.has(g) ? "checked" : ""}>${swatch(gcol(g))} ${esc(g)}</label>`).join("")}</details>` : ""}</div>`, true);
     sec("L", "e-m", "Wells and map", `<div class="row"><label class="chk lay" data-hl="wells"><input type="checkbox" id="e-w" ${st.wells ? "checked" : ""}>${swatch("#e0218a", "line")} wells (vertical depth; sidetracks without one estimated)</label></div>
@@ -607,6 +611,10 @@ const PAGES = {
       const tr = [];
       D.forEach(([S], ri) => S.surfaces.filter((h) => st.show.has(h.name)).forEach((h) => { const c = gcol(h.name); tr.push({ type: "surface", x: S.x, y: S.y, z: h.z.map((r) => r.map((v) => (v == null ? null : -v))), customdata: h.sd.map((r, a) => r.map((v, b) => [v, h.near_km[a][b]])), surfacecolor: h.z.map((r) => r.map(() => 0)), cmin: 0, cmax: 1,
         colorscale: [[0, c], [1, c]], showscale: false, opacity: 0.45, name: h.name, meta: { hl: h.name, pick: "surface", region: REG[ri] }, showlegend: false, hovertemplate: `estimated ${esc(h.name)}${ALL ? ` (${esc(REG[ri])})` : ""}: %{z:.0f} m (signed TVDSS)<br>± %{customdata[0]:.0f} m (1 sd); nearest well pick %{customdata[1]:.1f} km<extra></extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } }); }));
+      if (st.gc) { const G = (await Promise.all(REG.map((r) => get("gc|" + r, () => api("earth/greenclay", { region: r, step: ALL ? 3 : 2 }).catch(() => null))))).filter(Boolean); if (my !== st.seq) return;
+        G.forEach((g) => [["top", 0.75], ["base", 0.35]].forEach(([k, op]) => tr.push({ type: "surface", x: g.x, y: g.y, z: g[k].map((r) => r.map((v) => (v == null ? null : -v))), customdata: g.thick, surfacecolor: g[k].map((r) => r.map(() => 0)), cmin: 0, cmax: 1,
+          colorscale: [[0, "#7a9a3a"], [1, "#7a9a3a"]], showscale: false, opacity: op, name: `Green Clay ${k}`, meta: { hl: "greenclay" }, showlegend: false, lighting: { ambient: 0.85, diffuse: 0.3 },
+          hovertemplate: `Green Clay ${k}: %{z:.0f} m (TVDSS)<br>thickness %{customdata:.0f} m<br>${esc(g.relation)}<extra>Nature's Plug relation</extra>` }))); }
       const bins = st.fade ? [[0.6, 1.01, 0.95, "well supported"], [0.3, 0.6, 0.5, "some support"], [-1, 0.3, 0.15, "little support"]] : [[-1, 1.01, 0.85, "cells"]];
       const prop = async (name, k) => { const P = (await Promise.all(REG.map((r) => get(k + "|" + r, () => ea("property", r, { name, limit: lim }).catch(() => null))))); return P.map((p, ri) => p && { ...p, ri }).filter(Boolean); };
       const join = (P, f) => P.flatMap((p) => (f === "customdata" ? p.cell.map((c, i) => [c, p.unit[i], p.sd?.[i], p.ri]) : p[f]));  // one list over the regions; customdata = cell, unit, sd, region
@@ -783,12 +791,16 @@ const PAGES = {
     $("#e-g").onchange = (e) => { const n = e.target.dataset.g; if (!n) return; e.target.checked ? st.show.add(n) : st.show.delete(n); draw(); };
     $("#e-ml").onchange = (e) => { const n = e.target.dataset.m; if (!n) return; e.target.checked ? st.map.add(n) : st.map.delete(n); draw(); };
     $("#e-none").onclick = () => setG([]); $("#e-all").onclick = () => setG(groups); $("#e-sug").onclick = () => setG(sugg(st.t));
-    $$("[data-pre]").forEach((b) => (b.onclick = () => { const [, , t] = PRESET.find((p) => p[0] === b.dataset.pre); st.colour = "p"; $("#e-c").value = "p"; st.pauto = true; $("#e-pa").checked = true; st.smin = 0; $("#e-s").value = 0; st.fade = true; $("#e-f").checked = true;
+    $$("[data-pre]").forEach((b) => (b.onclick = () => { const [k, , t] = PRESET.find((p) => p[0] === b.dataset.pre); st.colour = "p"; $("#e-c").value = "p"; st.pauto = true; $("#e-pa").checked = true; st.smin = 0; $("#e-s").value = 0; st.fade = true; $("#e-f").checked = true;
+      if (k === "clay") {  // Jeham's screen in the same 3D space: his verdicts on the wells, the Green Clay interval, the two clay groups
+        st.map = new Set(["coast", "plug"]); $$("[data-m]").forEach((c) => (c.checked = st.map.has(c.dataset.m))); st.gc = true; $("#e-gc").checked = true; st.wells = true; $("#e-w").checked = true;
+        setT("overpressure"); setG(["SEABED", "HORDALAND GP", "ROGALAND GP"]); return; }
       setT(t); setG(sugg(t)); }));
     $("#e-top").onclick = () => { st.cam = { eye: { x: 0, y: 0, z: 2.4 }, up: { x: 0, y: 1, z: 0 } }; st.camForce = true; draw(); };
     $("#e-reset").onclick = () => { st.cam = null; st.camForce = true; draw(); };
     [$("#e-g"), $("#sec-e-m")].forEach((el) => el && hoverLayers(el, () => $("#pe"), (n) => (n.startsWith("map:") || n === "wells" || n === "observed" ? null : gcol(n))));
     $("#e-o").onchange = (e) => { st.obs = e.target.checked; draw(); };
+    $("#e-gc").onchange = (e) => { st.gc = e.target.checked; draw(); };
     const KIT = seismicKit({ SV, LN, get sv() { return st.sv; }, later: draw });  // the inspector (side pane, 2D and 3D), shared module
     if ($("#sv-id")) { const sv = st.sv; $("#sv-id").onchange = (e) => { sv.id = e.target.value; sv.base = ""; sv.ck = ""; const me = SV.find((x) => x.id === sv.id); $("#sv-base").innerHTML = '<option value="">none (amplitude)</option>' + SV.filter((x) => me && me.processing && x.id !== sv.id && x.processing === me.processing).map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join(""); draw(); };
       sv.clear = true; $$('[name="sv-ax"]').forEach((r) => (r.onchange = (e) => { sv.axis = e.target.value; sv.ck = ""; draw(); })); $("#sv-pos").oninput = (e) => { sv.pos = +e.target.value; draw(); };

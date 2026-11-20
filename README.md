@@ -1,13 +1,17 @@
 # Subsurface Evidence / Subsurface Studio
 
-**Subsurface Evidence** is the main project: a 3D model of the Norwegian Continental Shelf that links predictions back to wells, logs, core plugs, reports and seismic interpretations. It keeps measured evidence, interpretations, model estimates and unknowns separate. **Subsurface Studio** also contains the original FORCE VibeCode Hackathon tools (Stavanger, 19 to 20 November 2026).
+**Subsurface Evidence** answers one screening question: which Smeaheia legacy wells report a reservoir or primary-seal encounter, and what needs checking? The 3D review separates stratigraphic picks, sampled trajectories, reported operations and unknowns. **Research** preserves the wider NCS model. **Subsurface Studio** also contains the original FORCE VibeCode Hackathon tools (Stavanger, 19 to 20 November 2026).
 
 ## Start in 3D
 
-Open **Subsurface model → Explore Smeaheia**. Click a well, horizon or cell to inspect its sources, depth reference and model support. **Strata Desk** answers questions using the selected scene and cites its sources. Start with the [local run guide](subsurface-evidence/README.md).
+Open **Smeaheia**. Select a well by name or on the scene. Five of six wellheads in the indexed survey footprints report both Sognefjord and Draupne; one has no qualifying picks. The outside reference well is separate. These are not verified crossings of a storage boundary or findings of barrier integrity. Start with the [local run guide](subsurface-evidence/README.md).
+
+**Well tracks** searches 8,496 registered exploration and development boreholes. Only 2,034 have positioned records in the checked sources. On **Smeaheia**, turn on **Colour wellheads by rock + pressure rule** to see a candidate (+), below threshold on supported metres (−), or insufficient evidence (?). Colours are not plug-test results. [Claude handoff: current state and next task](subsurface-evidence/HANDOFF.md).
 
 | What | Current state |
 |---|---|
+| **Rock + pressure interval screen** | At `31/3-3`, the longest interval meeting both conditions above Sognefjord is 13 m; the scenario requires 30 m. Five other local wells lack enough evidence. The outside reference has a 70 m interval; its result is not transferred. No barrier or CO₂ pressure prediction. |
+| **Depth prediction gate** | On 20 path-supported Horda wells in five held-out spatial blocks, nearest-well MAE was 676 m vs 604 m for the training median. No candidate depth filled in. |
 | **Horda demo** | Frozen build `f46ffd5abca4`: 186,538 model cells, modelled porosity, a legacy-well proximity screen, and a versioned export. Ready locally; not activated on k3s. |
 | **Smeaheia seismic** | Time-domain context and separately labelled published picks. No independently verified time-to-depth tie; the first seismic sample is not the seabed. |
 | **Porosity** | Measured logs improved predictions of held-out core plugs. Adding rock-physics transforms to those logs showed no reliable extra gain. The template does not feed production probabilities. Neither test validates undrilled cells. |

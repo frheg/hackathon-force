@@ -1,7 +1,7 @@
 <!-- Browser self-test: serve the UI, open /selftest.html in headless Chromium (--dump-dom, long --virtual-time-budget), read PASS/FAIL lines. Builds one real target (about 35 s). -->
 <!doctype html><meta charset="utf-8"><body><pre id="out">running</pre><iframe id="f" style="width:1400px;height:900px"></iframe>
 <script>
-document.getElementById("f").src = ["?screen","?tracks"].includes(location.search) ? "index.html" : "index.html#data";
+document.getElementById("f").src = ["?screen", "?tracks"].includes(location.search) ? "index.html#screen" : "index.html#data";  // the 3D model is home now; both start on the Smeaheia page  // the 3D model is home now; these tests open their own page
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms)), R = [], ok = (n, v, d = "") => R.push(`${v ? "PASS" : "FAIL"} ${n} ${d}`);
 const F = () => document.getElementById("f").contentWindow, D = () => F().document, $ = (s) => D().querySelector(s);
 const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.now() - t < ms) { try { const v = fn(); if (v) return v; } catch {} await sleep(300); } return null; };
@@ -35,7 +35,7 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
       ok("old receipt preserved without backfilling the rule", !!await waitFor(() => /Historical receipt: no rock and pressure/.test($("#sc-interval")?.textContent)));
       ok("historical screen has no overlay or later tracks", !$("#sc-colour") && !$("#sc-track"));
       F().location.hash = "screen/5839/" + "0".repeat(64); ok("missing receipt fails closed", !!await waitFor(() => /screen unavailable/.test($("#view").textContent) && !$("#sc-scene")));
-      F().location.hash = "research"; ok("research tools remain reachable", !!await waitFor(() => $("#view a[href='#earth']") && $("#view a[href='#targets']")));
+      F().location.hash = "earth"; ok("the 3D model is reachable from the header and opens in the centre", !!await waitFor(() => D().querySelector("#links a[data-p='earth']") && $("#pe"), 90000));
       F().location.hash = "workflows"; ok("workflow deep link preserved", !!await waitFor(() => /Barrier Ledger/.test($("#view").textContent)));
       F().location.hash = "log"; ok("decision log reachable", !!await waitFor(() => /L083/.test($("#view").textContent)));
       return;
@@ -249,9 +249,9 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     $("#si-en").click(); await sleep(1500);
     $("#sv-inspect").click(); await sleep(500); ok("Close inspector removes both parts", !D().querySelector("#sec-insp") && !D().querySelector("#sec-inspc") && /Inspect seismic/.test($("#sv-inspect").textContent));
     // --- seven tabs; secondary pages under a sub-navigation; architecture charts with pan and zoom
-    ok("the header leads with the screen, then tracks, research and log", [...D().querySelectorAll("#links a")].map(a => a.dataset.p).join(",") === "screen,tracks,research,log");
+    ok("the header leads with the 3D model, then Smeaheia, targets, validation and about", [...D().querySelectorAll("#links a")].map(a => a.dataset.p).join(",") === "earth,screen,targets,validation,about");
     F().location.hash = "layers"; await waitFor(() => D().querySelector(".doc .subnav"), 30000);
-    ok("Layers opens under Research with Validation sub-navigation", D().querySelector("#links a.on")?.dataset.p === "research" && D().querySelector(".subnav a.on")?.textContent === "Layers");
+    ok("Layers opens under Validation with its sub-navigation", D().querySelector("#links a.on")?.dataset.p === "validation" && D().querySelector(".subnav a.on")?.textContent === "Layers");
     F().location.hash = "architecture"; await waitFor(() => D().querySelectorAll(".pz svg").length === 2, 60000);
     const pz = D().querySelector(".pz"), t0 = D().querySelector(".pzin").style.transform; pz.dispatchEvent(new (F().WheelEvent)("wheel", { deltaY: -100, clientX: 300, clientY: 200, bubbles: true, cancelable: true }));
     ok("architecture: two mermaid charts; wheel zooms", D().querySelectorAll(".pz svg").length === 2 && D().querySelector(".pzin").style.transform !== t0);

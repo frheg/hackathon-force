@@ -457,3 +457,14 @@ def jeham_wells():
     """Jeham's log-level verdicts for the map (P13, LOG L092): assessed log wells (their own logs) and wellbores left to plug, which take the
     verdict of the nearest assessed log well within 10 km (his rule, shown as his result)."""
     return _jeham_wells()
+
+
+@router.get("/greenclay")
+def greenclay(region: str = "pilot", step: int = 2):
+    """The Green Clay interval of Jeham's relation on our surfaces (P13, L091): top and base (= Rogaland top) TVDSS on the lattice."""
+    p = OUT / "earth" / region / "green_clay.npz"
+    if not p.exists():
+        raise HTTPException(404, "no Green Clay surface in this region (needs Hordaland and Rogaland tops)")
+    g = np.load(p); sl = (slice(None, None, step), slice(None, None, step)); top = np.where(g["top"] < 0, np.nan, g["top"])[sl]; T = np.where(g["thick"] < 0, np.nan, g["thick"])[sl]
+    return {"x": _r(g["x"][::step]), "y": _r(g["y"][::step]), "top": [_r(r, 0) for r in top], "base": [_r(r, 0) for r in top + T], "thick": [_r(r, 0) for r in T],
+            "relation": "top = Rogaland top - clip(194 + 0.14 x Hordaland thickness, 141, 430) m (Jeham, Nature's Plug); base = Rogaland top"}

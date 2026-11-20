@@ -24,7 +24,7 @@ async function mountSmeaheia(routeArg, live) {
       throw new Error("unsupported receipt");
   } catch (e) {
     if (live()) doc(`<h1>Smeaheia screen unavailable</h1><p>The pinned evidence could not be loaded (${esc(e.message)}). No other build was substituted.</p>
-      <a href="#research">Open the preserved research workspace</a>`);
+      <a href="#earth">Open the 3D subsurface model</a>`);
     return;
   }
   if (!live()) return;
