@@ -461,7 +461,8 @@ const PAGES = {
     const fms = [...new Set(MS.flatMap((m) => m.horizons.filter((h) => h.level !== "GROUP" && h.level !== "SEABED").map((h) => h.name)))];
     const LAYN = [...groups, ...fms], gcol = (g) => (g === "SEABED" ? "#8fb8d8" : LAYC[Math.max(0, LAYN.indexOf(g)) % LAYC.length]);  // one colour per top, the same in the list and the scene
     const ML = [["coast", "coast", css("--mut"), "line"], ["grid", "latitude and longitude", css("--rule"), "line"], ["faults", "mapped faults (Sodir)", "#b5442c", "line"],
-      ["elements", "structural elements (Sodir)", "#5b7fa6", "line"], ["names", "structural element names", "#5b7fa6", "text"], ["surveys", "seismic survey outlines", "#c99a06", "line"]];
+      ["elements", "structural elements (Sodir)", "#5b7fa6", "line"], ["names", "structural element names", "#5b7fa6", "text"], ["surveys", "seismic survey outlines", "#c99a06", "line"],
+      ["plug", "Nature's Plug verdicts (Jeham): green pass, red fail; filled = own logs, open = taken from the nearest log well within 10 km", "linear-gradient(90deg,#1a9850 50%,#d73027 50%)", "fill"]];
     // settings survive a change of region or target (owner: changing the region reset everything); remembered per browser
     const SAVE = "earth:settings", sv = (() => { try { return JSON.parse(localStorage.getItem(SAVE) || "{}"); } catch { return {}; } })(), PRE = M.presets || {};
     const sugg = (t) => ["SEABED", ...(PRE[t]?.top_groups || [])].filter((g) => groups.includes(g));  // the groups where the target is most likely
@@ -580,6 +581,16 @@ const PAGES = {
         if (st.map.has("faults")) line(m.faults.x, m.faults.y, "faults", "#b5442c", 2.5);
         if (st.map.has("elements")) line(m.elements.x, m.elements.y, "elements", "#5b7fa6", 1.5, "dash");
         if (st.map.has("names")) { const n = m.element_names.filter((e) => inb(e.x, e.y)); out.push({ type: "scatter3d", mode: "text", x: n.map((e) => e.x), y: n.map((e) => e.y), z: n.map(() => 0), text: n.map((e) => e.name), textfont: { size: 10, color: "#5b7fa6" }, meta: { hl: "map:names" }, name: "structural element names", hovertext: n.map((e) => `${e.name}: ${e.kind}`), hoverinfo: "text", showlegend: false }); } });
+      if (st.map.has("plug")) {  // Jeham's log-level screen (his engine, unchanged): solid = judged on the well's own logs, open = inherited
+        const J = await get("plug", () => api("earth/jeham/wells").catch(() => null));
+        if (J) { const COL = { pass: "#1a9850", fail: "#d73027" };
+          const pts = (S, keep) => { const x = [], y = [], c = [], t = []; S.lat.forEach((la, i) => { if (!keep(i)) return; const [px, py] = L3035(S.lon[i], la); if (!inb(px, py)) return; x.push(px); y.push(py); c.push(COL[S.verdict[i]] || "#9a9a9a"); t.push(i); }); return { x, y, c, t }; };
+          const I = pts(J.inherited, (i) => J.inherited.verdict[i] !== "none");
+          out.push({ type: "scatter3d", mode: "markers", x: I.x, y: I.y, z: I.x.map(() => 0), marker: { size: 3.5, color: I.c, symbol: "circle-open", line: { width: 1.5, color: I.c } }, name: "Nature's Plug: inherited verdict", meta: { hl: "map:plug" },
+            text: I.t.map((i) => `${J.inherited.name[i]}<br>Nature's Plug: ${J.inherited.verdict[i]}, taken from ${J.inherited.from[i]} at ${J.inherited.km[i]} km (his nearest-well rule)`), hoverinfo: "text", showlegend: false });
+          const A = pts(J.assessed, () => true);
+          out.push({ type: "scatter3d", mode: "markers", x: A.x, y: A.y, z: A.x.map(() => 0), marker: { size: 6, color: A.c, symbol: "circle", line: { width: 1, color: "#ffffff" } }, name: "Nature's Plug: own logs", meta: { hl: "map:plug" },
+            text: A.t.map((i) => `${J.assessed.name[i]}<br>Nature's Plug: ${J.assessed.verdict[i]} on its own logs; longest clay run in the pressure window ${J.assessed.longest_m[i] ?? 0} m${J.assessed.group[i] ? ` (${J.assessed.group[i]})` : ""}<br>rule: 30 m of GR > 40 API, RDEP < 1.3 ohm.m, DTC > 135 us/ft inside the leak-off window`), hoverinfo: "text", showlegend: false }); } }
       if (st.map.has("surveys")) { const SV = await get("surveys", () => api("seismic/surveys").catch(() => [])); const xs = [], ys = []; SV.forEach((s) => { if (!s.footprint?.length) return; const [a, b] = proj([...s.footprint, s.footprint[0]].map(([la, lo]) => [lo, la])); xs.push(...a); ys.push(...b); }); line(xs, ys, "surveys", "#c99a06", 3); }
       return out; };
     const minSupport = () => Math.max(st.smin, st.weak ? 0 : 0.05);

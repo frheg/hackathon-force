@@ -439,3 +439,21 @@ def jeham():
     if not p.exists():
         raise HTTPException(404, "not built: python -m se.earth.jeham")
     return json.loads(p.read_text())
+
+
+@lru_cache(maxsize=1)
+def _jeham_wells():
+    from se.config import DATA
+
+    e = json.loads((DATA / "natures_plug" / "engine_results.json").read_text()); ctl = [c for c in e["controls"] if c["assessed"]]
+    wb = e["wellbores_left_to_plug"]
+    return {"source": e["source"],
+            "assessed": {"name": [c["name"] for c in ctl], "lat": [c["lat"] for c in ctl], "lon": [c["lon"] for c in ctl], "verdict": [c["verdict"] for c in ctl], "longest_m": [c["longest_m"] for c in ctl], "group": [c["group"] for c in ctl]},
+            "inherited": {"name": [w["name"] for w in wb], "lat": [w["lat"] for w in wb], "lon": [w["lon"] for w in wb], "verdict": [w["log"] for w in wb], "from": [w["log_from"] for w in wb], "km": [w["log_km"] for w in wb]}}
+
+
+@router.get("/jeham/wells")
+def jeham_wells():
+    """Jeham's log-level verdicts for the map (P13, LOG L092): assessed log wells (their own logs) and wellbores left to plug, which take the
+    verdict of the nearest assessed log well within 10 km (his rule, shown as his result)."""
+    return _jeham_wells()
