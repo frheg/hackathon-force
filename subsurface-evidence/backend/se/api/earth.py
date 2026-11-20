@@ -429,3 +429,13 @@ def sensitivity():
         checks = {t: {"refit": rep[t].get("refit_check"), "range90": rep[t].get("range90_median")} for t in TARGETS if isinstance(rep.get(t), dict) and "refit_check" in rep[t]}
         out.append({"region": r, "title": REGIONS[r]["title"], **json.loads((d / "sensitivity.json").read_text()), "checks": checks})
     return out
+
+
+@router.get("/jeham")
+def jeham():
+    """Nature's Plug (Jeham, MIT) inside the model (P13, LOG L090): Green Clay surface tested at his report sites, his formation-level
+    window and nearest-well verdicts by region, his barrier cases with our Green Clay depth there."""
+    p = OUT / "earth" / "jeham.json"
+    if not p.exists():
+        raise HTTPException(404, "not built: python -m se.earth.jeham")
+    return json.loads(p.read_text())

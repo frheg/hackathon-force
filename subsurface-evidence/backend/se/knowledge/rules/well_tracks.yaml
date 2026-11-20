@@ -1,0 +1,49 @@
+id: exact-borehole-depth-track
+check: Registry depth rows require the identical NPDID and borehole name, valid bounds and no depth beyond a known TD. Never copy evidence from another well.
+guard: Placement, tests on equipment, reservoir flow tests and model scenarios are different observations. No present integrity outcome or probability is assigned.
+reports:
+  trow:
+    archive: seismic/smeaheia/well_reports.zip
+    member: Well_Reports/data/32-2-1_002_End_of_Well_Report.pdf
+    sha256: 3cb412b8cf3d480584a6877d0ec78e02798b520b7a1d6f92f85262558be91f36
+    credit: Equinor and Gassnova, Smeaheia release; report by Talisman Energy Norge AS.
+    url: https://doi.org/10.11582/2021.00012
+  sleipner:
+    item: 312725462
+    path: official/completion_reports/4462 fully public wellbore completion reports from the Norwegian continental shelf expl appraisal production/15_9-13/WELL/15_9-13_15-09-13_PB-706-0087.PDF
+    sha256: a45f8154f86d842aa909a5dffc52b8c79ebe2a69359c140b5dbab30beaaf2db4
+    credit: Public Diskos completion report, info item 312725462. FORCE completion report collection (CC BY 4.0).
+    url: https://doi.org/10.5281/zenodo.24320092
+cases:
+  - npdid: 5839
+    name: 32/2-1
+    report: trow
+    page: 57
+    datum: "Reported operational MD. PDF p.39 gives Sognefjord 902 m MD / 876 m TVDSS and TD 1300 / 1274. P.8 gives RT +26 m, but reverses the TD labels. Compare nominal MD only; no independent survey correlation."
+    placements:
+      - [1076, 1300, "Cement plug 1"]
+      - [851, 1071, "Cement plug 2"]
+      - [620, 846, "Cement plug 3"]
+      - [400, 615, "Cement plug 4"]
+    compare: [151, 28]
+  - npdid: 45
+    name: 15/9-13
+    report: sleipner
+    page: 123
+    datum: Reported drilling depths in metres; datum not verified against the registry. No cross-source overlap calculated.
+    placements:
+      - [124, 320, "26 May: cement plug laid after the overlap test"]
+    tests:
+      - "24 May: attempted 13 3/8-inch casing shoe test at 83 bar; reported negative. Test interval not specified."
+      - "26 May: 13 3/8 by 20-inch casing overlap tested to 17 bar, reported OK, before laying the plug. 320 m is pipe depth, not the tested interval."
+dst_notes:
+  - npdid: 8951
+    name: 31/5-7
+    table_md: [2698, 2805]
+    fragment: "One drill stem test was performed from the interval 2697.5 to 2805 m in the Johansen Formation."
+    note: "The structured table gives 2698 m, the history 2697.5 m. One reservoir flow test, not two observations and not a wellbore barrier test."
+history:
+  - [131, "25/2-8", 890, 1000, "A cement plug was set from 1000 m to 890 m", "Drilling operation after BOP problems, not a verified abandonment barrier."]
+  - [229, "16/4-1", 415, 494, "a cement plug was set from 494 - 415 m", "Lost circulation; the report says cement was subsequently drilled out."]
+  - [26, "6610/7-2", 3148, 3292, "A cement plug was set from 3292 to 3148 m", "Stuck pipe and sidetrack; not proof of an abandonment barrier."]
+  - [1138, "7219/9-1", 2004, 2185, "A cement plug was set from 2185 m to 2004 m", "Fishing and sidetrack; not proof of an abandonment barrier."]

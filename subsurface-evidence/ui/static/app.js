@@ -21,7 +21,7 @@ const note = (title, ...l) => `<div class="note"><b>${title}</b>${l.map((x) => `
 const STATUS_WORDS = { helps: "helps", no_evidence: "no measurable help", hurts: "makes it worse", not_built: "not built / no data" };
 const evTip = (l) => { const e = l.evidence; if (!e) return l.status === "not_built" ? "Nothing to test: no code or no data for this evidence." : ""; const verb = l.status === "helps" ? "improved" : l.status === "hurts" ? "worsened" : "did not measurably change";
   return `On wells held out of fitting, adding this ${verb} prediction accuracy by ${sg(e.delta_gain)} (90% range ${sg(e.p05)} to ${sg(e.p95)}), compared with ${e.compared_with}${e.units ? `, on ${e.units} units` : ""}. Range entirely above 0 = helps; spanning 0 = no evidence; entirely below 0 = worse.`; };
-const NAV = [["earth", "Subsurface model"], ["targets", "Targets"], ["units", "Units"], ["validation", "Validation"], ["data", "Data"], ["architecture", "Architecture"], ["log", "Log"]];
+const NAV = [["screen", "Smeaheia"], ["tracks", "Well tracks"], ["research", "Research"], ["log", "Decision log"]];
 // secondary pages live under one tab each, reached by the sub-navigation at the top of that tab (old links keep working)
 const SUB = { earth: [["earth", "Model"], ["rpt", "Rock physics"], ["scene", "Saved targets (depth along the hole)"]], units: [["units", "All units"], ["contradictions", "Most surprising"]], validation: [["validation", "Scorecard"], ["layers", "Layers"], ["knowledge", "Geology rules"], ["sensitivity", "Sensitivity"]],
   data: [["data", "Catalog"], ["lineage", "Lineage"], ["workflows", "Other tools"]], architecture: [["architecture", "Charts"], ["start", "Overview and terms"]] };
@@ -122,32 +122,62 @@ function widenRight(on) { const el = $("#sideR"); if (!el) return;  // the inspe
 async function init() {
   $("#links").innerHTML = NAV.map(([k, t]) => `<a href="#${k}" data-p="${k}">${t}</a>`).join("");
   $("#theme").onclick = () => { const d = document.documentElement; d.dataset.theme = (d.dataset.theme || (matchMedia("(prefers-color-scheme:dark)").matches ? "dark" : "light")) === "dark" ? "light" : "dark"; route(); };
-  await loadTarget(); $("#target").onchange = async (e) => { TARGET = e.target.value; localStorage.setItem("target", TARGET); await loadTarget(); route(); };
-  addEventListener("hashchange", () => { REDRAW.scene = REDRAW.insp = null; route(); }); addEventListener("resize", () => fitPlots()); route(); setInterval(job, 15000); job();
+  $("#target").onchange = async (e) => { TARGET = e.target.value; localStorage.setItem("target", TARGET); await loadTarget(); route(); };
+  addEventListener("hashchange", route); addEventListener("resize", fitPlots); route();
+  setInterval(() => { if (!$("#job").hidden) job(); }, 15000);
+}
+const assetPromises = new Map(), researchScripts = {
+  plot: "https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js",
+  leaf: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js",
+  topo: "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js",
+  marked: "https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js",
+  mermaid: "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js",
+};
+function researchAssets(p) {
+  const keys = [];
+  if (["earth","rpt","scene","data","unit","validation","layers","start"].includes(p)) keys.push("plot");
+  if (["earth","data"].includes(p)) {
+    keys.push("leaf");
+    if (!$("#leaf-css")) { const l = document.createElement("link"); l.id = "leaf-css"; l.rel = "stylesheet"; l.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"; document.head.append(l); }
+  }
+  if (["earth","scene"].includes(p)) keys.push("topo", "marked");
+  if (p === "rpt") keys.push("marked");
+  if (p === "architecture") keys.push("marked", "mermaid");
+  return Promise.all(keys.map((k) => {
+    if (!assetPromises.has(k)) assetPromises.set(k, new Promise((ok, fail) => {
+      const s = document.createElement("script"); s.src = researchScripts[k]; s.onload = ok;
+      s.onerror = () => { assetPromises.delete(k); s.remove(); fail(new Error("Could not load research chart library: " + k)); }; document.head.append(s);
+    }));
+    return assetPromises.get(k);
+  }));
 }
 async function loadTarget() { TARGETS = await api("targets"); const all = [TARGETS.builtin, ...TARGETS.saved]; if (!all.some((t) => t.id === TARGET)) TARGET = "green_clay";
   $("#target").innerHTML = all.map((t) => `<option value="${t.id}" ${t.id === TARGET ? "selected" : ""}>${esc(t.title)}</option>`).join(""); META = await api("meta"); LAYERS = await api("layers"); }
 const job = async () => { const j = await api("last_job"); $("#job").textContent = j.job ? `last heavy job: ${j.job}, ${j.via}, ${j.seconds}s` : ""; };
 let routeSeq = 0;
 const pageError = (e) => doc(`<div class="note warn"><b>Could not load this page</b><pre>${esc(String(e.stack || e).slice(0, 900))}</pre></div>`);
-function route() {
-  const [p, ...rest] = (location.hash.slice(1) || "earth").split("/");
+async function route() {
+  const [p, ...rest] = (location.hash.slice(1) || "screen").split("/");
   const seq = ++routeSeq, live = () => seq === routeSeq;
   stageObserver?.disconnect(); closeDesk(); REDRAW.scene = REDRAW.insp = null;
   document.querySelectorAll("#links a").forEach((a) => {
-    const selected = a.dataset.p === (PARENT[p] || p);
+    const selected = a.dataset.p === (["screen","log","tracks"].includes(p) ? p : "research");
     a.classList.toggle("on", selected);
     if (selected) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   if (map) { map.remove(); map = null; } $("#view").innerHTML = '<div class="doc"><p class="tip">loading…</p></div>';
   if (p === "map") { location.hash = "earth"; return; }  // old addresses land on the subsurface model
-  const tl = $("#target")?.closest("label"); if (tl) tl.style.display = p === "earth" ? "none" : "";  // the evidence-engine target does not apply to the earth model  // the Map page was folded into 3D (top view, neighbour switch, fine estimate)
-  (PAGES[p] || PAGES.start)(decodeURIComponent(rest.join("/")), live).then(() => {
+  const needsTarget = ["start","scene","units","unit","contradictions","targets","validation","layers","knowledge"].includes(p);
+  $("#target").closest("label").hidden = !needsTarget; $("#job").hidden = !needsTarget;
+  try {
+    await Promise.all([researchAssets(p), needsTarget && (!META || !LAYERS) ? loadTarget() : null]);
+    if (!live()) return;
+    await (PAGES[p] || PAGES.research)(decodeURIComponent(rest.join("/")), live);
     const sub = SUB[PARENT[p]], d = $("#view .doc");
     const nav = sub && `<nav class="subnav">${sub.map(([k, t]) => `<a href="#${k}" class="${k === p ? "on" : ""}">${t}</a>`).join("")}</nav>`;
     if (live() && sub && d) d.insertAdjacentHTML("afterbegin", nav);
     else if (live() && sub && $("#sbL")) $("#sbL").insertAdjacentHTML("afterbegin", nav.replace('class="subnav"', 'class="subnav side"'));  // 3D pages: the views switch in the sidebar
-  }).catch((e) => { if (live()) pageError(e); });
+  } catch (e) { if (live()) pageError(e); }
 }
 const doc = (h) => ($("#view").innerHTML = `<div class="doc">${h}</div>`);
 let use = null;
@@ -354,8 +384,39 @@ function seismicKit(ctx) {
 }
 const RPTC = { brine: "#1f77b4", oil: "#2ca02c", gas: "#d62728" };  // rock physics template fluid lines
 const PAGES = {
-  async start() {
+  screen: mountSmeaheia,
+  tracks: mountTracks,
+  // ---- Nature's Plug (Jeham) inside the model (PLAN P13, LOG L090): his Green Clay relation on our surfaces, tested at his report sites;
+  // his formation-level and nearest-well verdicts by region; his barrier cases. A comparison and a screen, not a barrier verification.
+  async jeham() {
+    const J = await api("earth/jeham"), g = J.green_clay_test, RN = { pilot: "Northern North Sea (Horda)", north_sea_south: "Southern North Sea", norwegian_sea: "Norwegian Sea", barents: "Barents Sea" };
+    doc(`<h1>Nature's Plug in the model</h1><p class="lead">Jeham's open screen for where overburden clay could seal a well (<a href="https://github.com/jeham3408/natures-plug/tree/3df7c523f9469756aeb8910c2be01456ddda7df8" target="_blank" rel="noopener">natures-plug</a>, MIT, commit 3df7c52), run unchanged and joined to our earth model. It ranks where to look; it does not verify a barrier.</p>
+      <h2>A. Green Clay as a surface of our model</h2>
+      <p>His relation, ${esc(J.relation)}, applied to our kriged Hordaland and Rogaland tops in every shelf column. At his ${g.sites} report sites (wells whose reports give a TVD for the Green Clay top): our surface misses by <b>${g.mean_abs_miss_ours_m} m</b> on average, his own prediction by <b>${g.mean_abs_miss_his_m} m</b> (his held-out figure, leaving a field out: ${g.his_field_held_out_m} m). Ours is ${Math.abs(g.median_signed_miss_ours_m)} m shallower in the median; about 25–30 m of that is datum (report depths below the rig floor, ours below sea level).</p>
+      <p class="tip">Not a held-out test: his coefficients were fitted on these sites, and our surfaces include the sites' own group tops.</p>
+      <table style="font-size:13px"><tr><th>field<th class=r>report top (m TVD)<th class=r>his prediction (m)<th class=r>ours (m TVDSS)<th class=r>our miss (m)<th>source</tr>
+      ${J.green_clay_sites.map((s) => `<tr><td>${esc(s.field)}<td class=r>${s.report_tvd_m}<td class=r>${s.his_pred_m ?? "–"}<td class=r>${s.our_top_tvdss_m ?? "–"}<td class=r>${s.our_err_m ?? "–"}<td class="tip">${esc(s.file || "")}${s.page ? `, p. ${s.page}` : ""}</tr>`).join("")}</table>
+      <h2>B and D. His verdicts by region</h2>
+      <p class="tip">Formation level: an exploration well has at least 50 m of Hordaland or Rogaland inside the leak-off pressure window (present), less (thin), none (absent), or cannot be tested. Nearest-well: a wellbore left to plug takes the log verdict of the nearest assessed log well within 10 km. Our Smeaheia screen does not do this; it is shown as his result.</p>
+      <table style="font-size:13px"><tr><th>region<th class=r>Green Clay columns<th class=r>median top (m TVDSS)<th class=r>median thickness (m)<th class=r>exploration wells: present / thin / absent / untested<th class=r>left to plug: pass / fail / no well within 10 km</tr>
+      ${Object.entries(J.regions).map(([r, R]) => `<tr><td>${esc(RN[r] || r)}<td class=r>${R.green_clay?.columns?.toLocaleString() ?? "–"}<td class=r>${R.green_clay?.top_median_m ?? "–"}<td class=r>${R.green_clay?.thickness_median_m ?? "–"}<td class=r>${R.formation_level.present} / ${R.formation_level.thin} / ${R.formation_level.absent} / ${R.formation_level.none}<td class=r>${R.inheritance.log_pass} / ${R.inheritance.log_fail} / ${R.inheritance.log_none}</tr>`).join("")}</table>
+      <p class="tip">Shelf totals from his engine: ${J.engine_totals.left.toLocaleString()} wellbores left to plug; ${J.engine_totals.log[2]} pass, ${J.engine_totals.log[1]} fail, ${J.engine_totals.log[0]} with no assessed log well within 10 km. ${J.engine_totals.controls.assessed} of ${J.engine_totals.controls.all} log wells assessable, ${J.engine_totals.controls.pass} pass. Log level against formation level: ${J.agree.passPresent} of ${J.agree.passPresent + J.agree.passOther} passes are also "present".</p>
+      <h2>C. Reported clay barriers (his 15 hand-read cases)</h2>
+      <table style="font-size:13px"><tr><th>well<th>area<th>unit<th>outcome<th>what the report says<th class=r>our Green Clay top (m TVDSS)<th>source</tr>
+      ${J.barrier_cases.map((c) => `<tr><td>${esc(c.well)}<td>${esc(c.area || "")}<td>${esc(c.unit || "")}<td>${esc(c.outcome || "")}<td>${esc(c.summary || c.how || "")}<td class=r>${c.our_green_clay_top_tvdss_m ?? "–"}<td class="tip">${esc(c.src?.file || "")}${c.src?.page ? `, p. ${c.src.page}` : ""}</tr>`).join("")}</table>
+      <p class="tip">Credit: Nature's Plug by Jeham (MIT). Our use: LOG L090.</p>`);
+  },
+
+  async research() {
+    doc(`<h1>Research workspace</h1><p class="lead">Preserved models and experiments. These are not inputs to the Smeaheia well review.</p>
+      <h2>Regional models</h2><p><a href="#earth">3D Earth model &amp; seismic inspector</a> · <a href="#rpt">Rock physics</a> · <a href="#sensitivity">Sensitivity</a> · <a href="#jeham">Nature's Plug in the model</a></p>
+      <h2>Reported targets</h2><p><a href="#targets">Target builder</a> · <a href="#scene">Saved 3D targets</a> · <a href="#units">Well intervals</a> · <a href="#validation">Validation</a></p>
+      <h2>Sources &amp; methods</h2><p><a href="#data">Data catalog</a> · <a href="#lineage">Lineage</a> · <a href="#architecture">Architecture</a> · <a href="#workflows">Other Studio tools</a></p>
+      <p class="tip">The historical CO₂ storage and chance-of-success scores are uncalibrated. Regional model selection reused the retrospective time split. Neither validates a barrier or leak prediction.</p>`);
+  },
+  async start(_, live) {
     const d = META.data, fs = (await api("formations")).filter((f) => f.units >= 20).slice(0, 14), w = W();
+    if (!live()) return;
     doc(`<h1>${esc(META.title)}</h1><p class="lead">${esc(META.target_text)}. Each ${esc(w.unit)} gets an estimate, the evidence behind it, and a test on wells the model never saw.</p>
     <div class="grid g4"><div><div class="num">${d.labelled.toLocaleString()}</div><div class="cap">units used (${w.unit})</div></div><div><div class="num">${d.wellbores_labelled.toLocaleString()}</div><div class="cap">wells</div></div><div><div class="num">${d.rows.toLocaleString()}</div><div class="cap">${esc(w.rows)}</div></div><div><div class="num">${pct(d.base_rate)}</div><div class="cap">${esc(w.hit)}</div></div></div>
     <h2>How to read the numbers</h2><p>The <b>rate</b> is the share of ${esc(w.rows)} that ${esc(w.hit)}. It is what the records say, not a direct measurement of the ground. Evidence <b>layers</b> each add or subtract from the starting rate: the formation or group, nearby wells, well logs, later seismic. Hover a layer's status for the test behind it.</p>
@@ -789,8 +850,9 @@ const PAGES = {
   },
 
   // ---- P12: what the model's untested constants change (sensitivity), the inputs refitted per fold, and the coefficient uncertainty
-  async sensitivity() {
+  async sensitivity(_, live) {
     const R = await api("earth/sensitivity"); const v = (x) => (Array.isArray(x) ? x.join(" / ") : x == null ? "–" : typeof x === "number" ? (Math.abs(x) >= 100 ? Math.round(x).toLocaleString() : x) : esc(String(x)));
+    if (!live()) return;
     doc(`<h1>Sensitivity and checks</h1><p class="lead">Every constant the model uses without a data test of its own, set low and high with everything else fixed. <b>Matters</b> marks a constant that moves a held-out gain by more than 0.02, flips a rule verdict, changes a capacity by more than a quarter, or reorders the support. Units are in each row.</p>
       ${R.map((g) => `<h2>${esc(g.title)}</h2>
         <table style="font-size:13px"><tr><th>constant<th>values (low / used / high)<th>what it changes<th class=r>low<th class=r>used<th class=r>high<th></tr>
@@ -982,8 +1044,9 @@ const PAGES = {
     $("#t").onclick = (e) => { const r = e.target.closest("tr[data-u]"); if (r) location.hash = "unit/" + encodeURIComponent(r.dataset.u); }; $("#q").oninput = go; $("#f").onchange = go; $("#s").onchange = go; bindLayers(go); await go();
   },
 
-  async unit(id) {
+  async unit(id, live) {
     const draw = async () => { const u = await api("unit", { id, layers: useNow().join(",") }), P = u.estimate.parts, w = W(), names = { base: "Starting rate", strat: "Formation or group", spatial: "Nearby wells", logs: "Well logs", seismic: "Seismic" };
+      if (!live()) return;
       doc(`<p><a href="#units">← all units</a></p><h1>${esc(u.wellbore)} <span class="muted">× ${esc(u.formation)}</span></h1><p class="lead">${esc(u.level.toLowerCase())}, ${u.top}–${u.bot} m measured depth below the rig floor · ${u.lat.toFixed(3)}° N, ${u.lon.toFixed(3)}° E</p>
       <div class="grid g3"><div><div class="num">${u.green_rows} of ${u.described_clay_rows}</div><div class="cap">${esc(w.rows)} ${esc(w.hit)} (observed ${pct(u.observed_rate)})</div></div><div><div class="num">${pct(u.estimate.rate)}</div><div class="cap">model estimate (${pct(u.validation_estimate)} with this well held out)</div></div></div>
       <div class="row">${layerBox()}</div>${u.labelled ? "" : '<div class="note warn"><b>Too little data</b>Not used for training; the estimate is shown for context.</div>'}
@@ -995,8 +1058,9 @@ const PAGES = {
     await draw();
   },
 
-  async data() {
+  async data(_, live) {
     const cat = await api("catalog"), st = { t: null, f: [], x: null, y: "", agg: "mean", tab: "chart", off: 0 };
+    if (!live()) return;
     doc(`<h1>Data</h1><p class="lead">What we hold, where it comes from, and every table of the Sodir FactPages register. Pick a table to chart a column, read rows or map wells. Clicking a bar adds a filter that every view then respects.</p>
     <table><tr><th>dataset<th>what it contains<th>origin<th>size<th>used here</tr>${cat.datasets.map((d) => `<tr><td><b>${esc(d.name)}</b><br><span class="mono tip">${esc(d.path)}</span><td>${esc(d.what)}<td>${esc(d.source)}<td>${esc(d.size)}<td>${esc(d.used)}</tr>`).join("")}</table>
     <h2>FactPages tables</h2><div class="row"><select id="tb"><option value="">choose a table…</option>${cat.tables.map((t) => `<option value="${t.name}">${t.name} (${t.rows.toLocaleString()} rows, ${t.cols} columns)</option>`).join("")}</select></div><div id="ex"></div>`);
@@ -1064,8 +1128,9 @@ const PAGES = {
       ${pilot}${footprint}${historical}${current}${relations}<h2>Dataset inventory</h2><div style="overflow:auto"><table><tr><th>dataset<th>modalities<th>kind<th class="r">size / files<th>licence + truth status<th>known limits</tr>${rows}</table></div>`);
   },
 
-  async targets() {
+  async targets(_, live) {
     const opt = await api("targets/options"), T = await api("targets"), form = { title: "", mode: "well", table: "wellbore_exploration", population: [], success: [], group: "wlbMainArea", keywords: [], lith: ["clay"] };
+    if (!live()) return;
     const fmtG = (g) => `${sg(g.delta_gain, 4)} <span class="tip">[${sg(g.p05, 4)}, ${sg(g.p95, 4)}]</span> ${tag(g.p05 > 0 ? "helps" : g.p95 < 0 ? "hurts" : "no_evidence", g.p05 > 0 ? "helps" : g.p95 < 0 ? "worse" : "no evidence")}`;
     doc(`<h1>Targets</h1><p class="lead">A target is a question we can score: <i>for this well or interval, how likely is X?</i> Choose a table, say what counts as X, and the same engine (formation prior, neighbours, validation, explanations) runs on it. Everything built here is saved and can be opened on the map, 3D view, units and validation pages through the Target switch at the top.</p>
     <h2>Saved targets</h2><table id="tt"></table>
@@ -1113,13 +1178,15 @@ const PAGES = {
       plot($("#lw"), [{ type: "bar", orientation: "h", y: w.map((x) => x[0]), x: w.map((x) => x[1].w), marker: { color: w.map((x) => (x[1].stable_sign >= 0.9 ? css("--data") : css("--mut"))) }, error_x: { type: "data", symmetric: false, array: w.map((x) => x[1].p95 - x[1].w), arrayminus: w.map((x) => x[1].w - x[1].p05), color: css("--mut") } }], { yaxis: { autorange: "reversed" }, margin: { l: 60, r: 10, t: 10, b: 30 } }); }
   },
 
-  async knowledge() {
-    const k = await api("kb"); doc(`<h1>Knowledge</h1><p class="lead">Textbook geology rules, each with its source and a test against our data. <b>Agrees</b>: the data lean the way the rule says. <b>Disagrees</b>: the other way. <b>Inconclusive</b>: the data cannot tell. A rule is never trusted blindly and never hidden when the data disagree. AUC = chance that a positive row has a higher value than a negative one (0.5 = no difference); about one false hit in seven checks is expected by chance.</p>
+  async knowledge(_, live) {
+    const k = await api("kb"); if (!live()) return;
+    doc(`<h1>Knowledge</h1><p class="lead">Textbook geology rules, each with its source and a test against our data. <b>Agrees</b>: the data lean the way the rule says. <b>Disagrees</b>: the other way. <b>Inconclusive</b>: the data cannot tell. A rule is never trusted blindly and never hidden when the data disagree. AUC = chance that a positive row has a higher value than a negative one (0.5 = no difference); about one false hit in seven checks is expected by chance.</p>
     ${k.length ? `<table><tr><th>rule<th>source status<th>data says<th>numbers and sources</tr>${k.map((r) => `<tr><td><b>${esc(r.id)}</b> ${esc(r.statement)}${r.caveat ? `<br><span class="tip">${esc(r.caveat)}</span>` : ""}<td>${tag(r.status === "sourced" ? "helps" : r.status === "inferred" ? "no_evidence" : "muted", r.status.replace("_", " "))}<td>${tag(r.verdict)}<td><span class="mono">${esc(r.numbers)}</span><br>${r.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.says)}</a>`).join("<br>")}</tr>`).join("")}</table>` : '<div class="note"><b>None yet</b>No sourced rules have been written for this target. Rules live in backend/se/knowledge/rules/*.yaml and need a source and a status.</div>'}`);
   },
 
-  async validation() {
+  async validation(_, live) {
     const r = await api("validation"), d = r.delta, ab = r.ablation;
+    if (!live()) return;
     doc(`<h1>Validation</h1><p class="lead">The scorecard for “${esc(META.title)}”. We hide whole ${r.block_km} km blocks of wells, fit on the rest and predict the hidden ones. <b>Gain</b> is how much better than guessing the overall rate (0 = no better). Ranges are 90% intervals from resampling whole wells.</p>
     <h2>Does each layer help?</h2>${fig("v1", 260, "Gain difference when a layer is added, with 90% range. Right of zero = helps; spanning zero = no evidence; left = worse.")}
     <h2>Layer combinations</h2>${fig("v2", 260, `Gain for each set of layers on all ${ab.strat.units.toLocaleString()} held-out units.`)}
@@ -1137,15 +1204,17 @@ const PAGES = {
     if ($("#v6")) plot($("#v6"), [{ type: "bar", x: r.by_coverage.map((x) => x.coverage + " (n=" + x.n + ")"), y: r.by_coverage.map((x) => x.auc), marker: { color: data } }], { yaxis: { title: "AUC", range: [0.4, 0.9] }, shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0.5, y1: 0.5, line: { dash: "dash", color: mut } }] });
   },
 
-  async contradictions() {
+  async contradictions(_, live) {
     const c = await api("contradictions"), t = (rows, kind) => `<table><tr><th>unit<th class=r>trials<th class=r>successes<th class=r>model said<th class=r>${kind}</tr>${rows.slice(0, 25).map((x) => `<tr class="click" data-u="${esc(x.unit)}"><td>${esc(x.unit)}<td class=r>${x.coverage}<td class=r>${x.n_green}<td class=r>${pct(x.p_full)}<td class="r mono">${(x.tail_many ?? x.tail_none)?.toExponential(1)}</tr>`).join("")}</table>`;
+    if (!live()) return;
     doc(`<h1>Contradictions</h1><p class="lead">Where the records and the model disagree most. Either the model misses something, the record is unusual, or it is worth a second look. Candidates for review, not errors. “Chance” is the probability of a result this extreme if the model were right.</p><h2>Much higher than expected</h2>${t(c.reported_but_unexpected, "chance")}<h2>Expected, but none recorded</h2>${t(c.expected_but_not_reported, "chance")}`);
     $(".doc").onclick = (e) => { const r = e.target.closest("tr[data-u]"); if (r) location.hash = "unit/" + encodeURIComponent(r.dataset.u); };
   },
 
-  async architecture() {
+  async architecture(_, live) {
     // docs/architecture.md: mermaid charts rendered in place, each in a pan/zoom frame (wheel = zoom at the cursor, drag = move)
     const d = (await api("docs-list")).find((x) => x.name === "architecture");
+    if (!live()) return;
     if (!d) return doc(`<div class="note warn">docs/architecture.md is missing.</div>`);
     doc(`<h1>Architecture</h1><p class="lead">Every data source, how sources are joined, the methods applied, and what came out, with the reason behind each result. Scroll to zoom a chart, drag to move it, double-click to fit.</p><div class="md">${marked.parse(d.markdown.replace(/^# .*\n/, ""))}</div>`);
     const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme:dark)").matches);
@@ -1158,6 +1227,11 @@ const PAGES = {
     }
   },
 
-  async log() { const l = await api("log"); doc(`<h1>Decision log</h1><p class="lead">Every choice, number, mistake and correction, in order, with the reasoning. Wrong turns stay marked so the work can be backtracked.</p><div class="md">${marked.parse(l.markdown)}</div>`); },
+  async log(_, live) { const l = await api("log"); if (!live()) return; if (typeof l.markdown !== "string") throw new Error("Decision log unavailable");
+    const [intro, ...entries] = l.markdown.split(/^## (?=L\d+)/m);
+    doc(`<h1>Decision log</h1><p class="lead">Append-only source, newest entry shown first.</p>${entries.reverse().map((entry,i) => {
+      const [title,...body] = entry.split("\n");
+      return `<details${i ? "" : " open"}><summary>${esc(title)}</summary><pre class="screen-log">${esc(body.join("\n").trim())}</pre></details>`;
+    }).join("")}<details><summary>Log introduction</summary><pre class="screen-log">${esc(intro)}</pre></details>`); },
 };
 init();

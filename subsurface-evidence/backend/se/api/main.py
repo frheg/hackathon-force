@@ -2,6 +2,7 @@
 import os
 import time
 from pathlib import Path
+from threading import Lock
 
 import httpx
 import numpy as np
@@ -10,7 +11,16 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from se.api import explore, provenance, scene, seismic, targets_api, earth
+from se.api import (
+    earth,
+    explore,
+    provenance,
+    scene,
+    screen,
+    seismic,
+    targets_api,
+    tracks,
+)
 from se.api.state import State
 from se.config import LOG_MD, PROJECT, TARGET, WORKER_URL
 from se.infer.combine import ORDER
@@ -24,12 +34,17 @@ app.include_router(targets_api.router)
 app.include_router(seismic.router)
 app.include_router(provenance.router)
 app.include_router(earth.router)
+app.include_router(screen.router)
+app.include_router(tracks.router)
 S: dict = {}
+_state_lock = Lock()
 
 
 def st(target: str = "green_clay") -> State:
     if target not in S:
-        S[target] = State(target)
+        with _state_lock:
+            if target not in S:
+                S[target] = State(target)
     return S[target]
 
 
@@ -50,11 +65,6 @@ def layers_arg(layers: str | None, target: str = "green_clay") -> tuple:
     s = st(target)
     requested = s.default_on if layers is None else layers.split(",")
     return tuple(x for x in requested if x in ORDER)
-
-
-@app.on_event("startup")
-def _warm():
-    st()
 
 
 @app.get("/api/health")

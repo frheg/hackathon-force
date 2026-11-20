@@ -1,10 +1,21 @@
-# PLAN: NCS earth model with targets and confidence
+# PLAN: Smeaheia legacy-well evidence screen
 
-One question drives everything: **where is target X, how sure are we, and why.**
+Current question: **which Smeaheia wells have evidence of a reservoir or primary-seal encounter, and what still needs checking?**
 This file is the working plan. Any agent (Claude, Copilot, a person) can pick up one task, do it, log it in `LOG.md`, tick it here.
 Rules for working are in `../.github/copilot-instructions.md`. Read both before starting.
 
-## 0. Decisions (agreed with the owner, 2026-11-19, LOG L053)
+## Focus release (2026-11-20)
+
+- [x] Open on an exact-borehole review queue for the GN1101 and TNE01 indexed wellhead footprints. Outside reference separate. Registry MD, sampled positions and sourced operational claims remain distinct (L084).
+- [x] Test top Sognefjord against a well-only baseline on held-out wells. No gain, no new estimate published (L085).
+- [x] Keep regional models and tools under Research. Verify the pinned receipt, browser interactions, unavailable-data path and existing Earth route without activating a build (L086).
+- [x] Adapt Nature's Plug's interval rules to the exact Sognefjord borehole. Show measured support, pressure assumptions, continuous runs, formation context and missing inputs separately. No integrity prediction or neighbour transfer (L088).
+- [x] Make every registry borehole searchable across all areas. Compare exact-well formation, placement and test records on depth tracks; keep Smeaheia as home (L089).
+- [x] Add an optional exact-well rock + pressure overlay. Keep insufficient evidence and outside references explicit. Never colour by claimed integrity (L090).
+
+Next evidence, not release requirements: obtain the exact `32/4-4` formation picks, directional surveys spanning the missing top depths, and interval-specific barrier-test records. Independent local seismic time-depth controls are still missing. Sleipner tie QC and wider regional model selection remain separate research.
+
+## Historical regional plan (research, preserved): decisions from 2026-11-19, LOG L053
 
 - **Model:** a 3D earth model of the NCS built from all extractable information, including assumptions from relations between data types. Every assumption explicit, sourced, tested.
 - **Output per cell:** for each target, a calibrated **probability** and a **support** score (how much data, how close, how many independent sources agree). Two numbers, never one.
@@ -160,11 +171,11 @@ Each factor is a rule in `earth.yaml` with a data test, and enters a model only 
 - [x] **P11.3 Test physics against measured core.** L081 compares fixed density porosity, raw logs and the same logs plus physics on held-out blocks. No reliable incremental gain; retain the template as a diagnostic only.
 
 ### P12 Close the gaps an expert would raise (owner, 2026-11-20)
-- [ ] **P12.1 Sensitivity of untested constants.** Each constant without a data test (kernel lengths, shrinkage counts, selection margin, oil-window temperature, trap floor, NTG and thickness sigmas, storage efficiency, support constants, correlation lengths) set low and high; what moves: held-out gain, published form, CoS test, CO2 totals, support. A tornado table per region.
-- [ ] **P12.2 Physical inputs refitted inside each fold.** Temperature, porosity trend, burial and the maturity factors fitted without the held-out wells; gain compared with the shared fit. Surface-based features: show whether any published model uses them.
-- [ ] **P12.3 Coefficient uncertainty.** Cluster-bootstrap refits (whole wells) combined with the input Monte Carlo; how much wider the 90 percent ranges get.
+- [x] **P12.1 Sensitivity of untested constants.** (L089) Each constant without a data test (kernel lengths, shrinkage counts, selection margin, oil-window temperature, trap floor, NTG and thickness sigmas, storage efficiency, support constants, correlation lengths) set low and high; what moves: held-out gain, published form, CoS test, CO2 totals, support. A tornado table per region.
+- [x] **P12.2 Physical inputs refitted inside each fold.** (L089) Temperature, porosity trend, burial and the maturity factors fitted without the held-out wells; gain compared with the shared fit. Surface-based features: show whether any published model uses them.
+- [x] **P12.3 Coefficient uncertainty.** (L089) Cluster-bootstrap refits (whole wells) combined with the input Monte Carlo; how much wider the 90 percent ranges get.
 - [x] **P12.4 Versioned artefacts.** Freeze an idle regional build, verify dependencies and cell order, then switch one pointer. The 3D view, cell lookups, export and Strata Desk use the same snapshot. Legacy regions remain mutable; Horda activation is a separate release step. See L078.
-- [ ] **P12.5 Verify sources.** Every sourced_unverified reference resolved (Crossref for DOIs, the page for URLs): title, authors and year checked; status raised to sourced only with a quote read from the source.
+- [x] **P12.5 Verify sources.** (L089) Every sourced_unverified reference resolved (Crossref for DOIs, the page for URLs): title, authors and year checked; status raised to sourced only with a quote read from the source.
 - [x] **P12.6 Complete the frozen Horda demo locally.** L082 restores porosity, the legacy-well screen and versioned export in `f46ffd5abca4` without changing probability arrays. Activation is a separate release step.
 - [x] **P12.7 Audit Smeaheia by borehole and measured depth.** L080 inventories local curves, plugs, bounded core–log pairs and report/pick references; missing controls remain explicit in 3D.
 - [ ] **P12.8 Verify independent Smeaheia ties (external controls required).** Obtain original checkshots/VSP, directional surveys and processing datums; resolve the T2 and TNE01 identities and depth/time references. Reserve independent holdouts before fitting. See the [acquisition list](../docs/seismic-data.md#depth-controls-to-request-first).
@@ -183,3 +194,7 @@ Each factor is a rule in `earth.yaml` with a data test, and enters a model only 
 - Browser test: `chromium --headless --dump-dom --virtual-time-budget=1500000 http://127.0.0.1:8461/selftest.html`
 - GPU work: `nix develop ..#gpu` (from `hackathon-force/`), then `uv run --frozen --extra gpu ...`
 - Pod: namespace `subsurface-evidence`; code is read from disk; `kubectl -n subsurface-evidence rollout restart deploy/backend` reloads Python.
+
+### P13 Nature's Plug in the model (owner, 2026-11-20)
+- [x] **P13.1 Run Jeham's engine unchanged and join it.** (L091) Green Clay surface on our surfaces tested at his 29 sites; his formation-level and nearest-well verdicts by region; his barrier cases; page #jeham.
+- [ ] **P13.2 Green Clay held out.** Refit his relation leaving a field out on our surfaces, with a datum correction from each well's rig floor, before using it as an input anywhere.

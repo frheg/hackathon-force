@@ -1,0 +1,24 @@
+id: smeaheia-marker-review
+status: sourced
+scope: Two named stratigraphic markers, not the entire storage complex or a containment boundary.
+formations:
+  - {name: SOGNEFJORD FM, unit_id: 151, role: reservoir marker}
+  - {name: DRAUPNE FM, unit_id: 28, role: primary seal marker}
+sources:
+  site:
+    archive: seismic/smeaheia/reports.zip
+    member: Reports/data/Statoil internal report on Smeaheia Subsurface 2016 - selected extracts.pdf
+    sha256: 83ea3218323b1cb96a8af6e664ea0dbddceb02b258de219c6fe358614e0016a5
+    pdf_page: 5
+    finding: Names Sognefjord and Fensfjord reservoirs and Draupne shales as primary seal. This screen uses the Sognefjord top, not all reservoir units.
+  abandonment:
+    archive: seismic/smeaheia/well_reports.zip
+    member: Well_Reports/data/32-2-1_002_End_of_Well_Report.pdf
+    sha256: 3cb412b8cf3d480584a6877d0ec78e02798b520b7a1d6f92f85262558be91f36
+    pdf_page: 57
+    section: Plug & Abandonment / SUMMARY (not OBJECTIVE)
+    wellbore: 32/2-1
+    npdid: 5839
+    finding: The operations summary reports four cement plugs, from 1300 to 1076, 1071 to 851, 846 to 620 and 615 to 400 m along the hole. Placement is reported, not independently verified integrity.
+check: Exact wellbore NPDID and name, FORMATION level, unit ID and name, positive MD interval. Unknown if no qualifying row.
+guard: A formation pick records an interpreted encounter at well depth, not a penetration of a model cell, an engineered barrier test or a leak.

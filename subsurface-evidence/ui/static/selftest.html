@@ -1,11 +1,78 @@
 <!-- Browser self-test: serve the UI, open /selftest.html in headless Chromium (--dump-dom, long --virtual-time-budget), read PASS/FAIL lines. Builds one real target (about 35 s). -->
-<!doctype html><meta charset="utf-8"><body><pre id="out">running</pre><iframe id="f" style="width:1400px;height:900px" src="index.html#data"></iframe>
+<!doctype html><meta charset="utf-8"><body><pre id="out">running</pre><iframe id="f" style="width:1400px;height:900px"></iframe>
 <script>
+document.getElementById("f").src = ["?screen","?tracks"].includes(location.search) ? "index.html" : "index.html#data";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms)), R = [], ok = (n, v, d = "") => R.push(`${v ? "PASS" : "FAIL"} ${n} ${d}`);
 const F = () => document.getElementById("f").contentWindow, D = () => F().document, $ = (s) => D().querySelector(s);
 const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.now() - t < ms) { try { const v = fn(); if (v) return v; } catch {} await sleep(300); } return null; };
 (async () => {
   try {
+    if (location.search === "?screen") {
+      await waitFor(() => $("#sc-well"));
+      ok("home loads focused screen with no research target", !!$("#sc-well") && $("#target").closest("label").hidden && $("#links a.on").dataset.p === "screen");
+      ok("rule overlay starts off", !$("#sc-colour").checked && $("#sc-legend").hidden && !$("#sc-scene [data-rule]"));
+      $("#sc-colour").click();
+      ok("one local below threshold, five unknown, reference alone qualifies",
+        $("#sc-scene [data-rule='below']")?.dataset.well === "447" && D().querySelectorAll("#sc-scene [data-rule='unknown']").length === 5 &&
+        D().querySelectorAll("#sc-scene [data-rule='candidate']").length === 1 && $("#sc-scene [data-rule='candidate']")?.dataset.well === "20" &&
+        /ref/.test($("#sc-scene [data-rule='candidate'] title")?.textContent) && !$("#sc-legend").hidden);
+      $("#sc-colour").click();
+      ok("overlay off restores neutral wellheads", !$("#sc-scene [data-rule]") && $("#sc-legend").hidden);
+      ok("selected report identifies page and does not infer integrity", /PDF p.57/.test($("#sc-detail").textContent) && /integrity: unknown/i.test($("#sc-detail").textContent));
+      const scChange = (id) => { $("#sc-well").value = id; $("#sc-well").dispatchEvent(new (F().Event)("change")); };
+      ok("one local LOT does not become an integrity verdict", /insufficient evidence.*Need two positioned LOT/s.test($("#sc-interval").textContent));
+      scChange("447"); ok("strict run and load sensitivity stay distinct", /not seen on supported metres/.test($("#sc-interval").textContent) && /13 m/.test($("#sc-interval").textContent) && /no overbalance from mud 0 m/.test($("#sc-interval").textContent));
+      scChange("2918"); ok("T2 is not a parent path", /T2 workbook RKB is 23 m/.test($("#sc-detail").textContent) && /Unknown/.test($("#sc-detail tbody").textContent));
+      scChange("10166"); ok("missing well stays unknown", [...D().querySelectorAll("#sc-detail tbody tr")].every(r => r.cells[1].textContent === "Unknown"));
+      ok("selection pins receipt", /^#screen\/10166\/[0-9a-f]{64}$/.test(F().location.hash));
+      $("#sc-scene [data-well='5839']").dispatchEvent(new (F().MouseEvent)("click", {bubbles:true})); ok("scene selects well", $("#sc-well").value === "5839");
+      const scScene = $("#sc-scene").innerHTML; $("#sc-plan").click(); ok("plan projection changes geometry", scScene !== $("#sc-scene").innerHTML);
+      $("#sc-surface").click(); ok("optional surface shows model SD", !!$("#sc-scene .sc-grid title") && /model SD/.test($("#sc-scene .sc-grid title").textContent));
+      scChange("20"); ok("outside reference separate from review candidates", /Outside reference only/.test($("#sc-detail").textContent));
+      ok("candidate interval does not change integrity", /candidate interval/.test($("#sc-interval").textContent) && /1039–1109 m MD/.test($("#sc-interval").textContent) && /integrity: unknown/i.test($("#sc-detail").textContent));
+      ok("default view never fetches a target model or external script", !F().performance.getEntriesByType("resource").some(r => /\/api\/(earth|targets|meta|layers)([/?]|$)|cdnjs|jsdelivr/.test(r.name)));
+      F().location.hash = "screen/5839/9add38a1df98dadb32bddd5e722b8cca7760f1b6dd9b0f740f16bcc380fa2ecf";
+      ok("old receipt preserved without backfilling the rule", !!await waitFor(() => /Historical receipt: no rock and pressure/.test($("#sc-interval")?.textContent)));
+      ok("historical screen has no overlay or later tracks", !$("#sc-colour") && !$("#sc-track"));
+      F().location.hash = "screen/5839/" + "0".repeat(64); ok("missing receipt fails closed", !!await waitFor(() => /screen unavailable/.test($("#view").textContent) && !$("#sc-scene")));
+      F().location.hash = "research"; ok("research tools remain reachable", !!await waitFor(() => $("#view a[href='#earth']") && $("#view a[href='#targets']")));
+      F().location.hash = "workflows"; ok("workflow deep link preserved", !!await waitFor(() => /Barrier Ledger/.test($("#view").textContent)));
+      F().location.hash = "log"; ok("decision log reachable", !!await waitFor(() => /L083/.test($("#view").textContent)));
+      return;
+    }
+    if (location.search === "?tracks") {
+      await waitFor(() => $("#sc-track"));
+      $("#sc-track").open = true;
+      const tr = i => $(`.well-track[data-track-id='${i}']`);
+      ok("home opens the pinned Trow comparison on demand", !!await waitFor(() => tr(5839)) && /110 of 110 m/.test(tr(5839).textContent) && /reverses the TD labels/.test(tr(5839).textContent));
+      tr(5839).querySelector("a[href^='#tracks/']").click();
+      await waitFor(() => $("#wt-area") && tr(5839));
+      ok("all-area link pins the same borehole and release", /^#tracks\/5839\/[a-f0-9]{64}$/.test(F().location.hash) && /8496 matching/.test($("#wt-count").textContent));
+      const change = (sel, val, ev) => { $(sel).value=val; $(sel).dispatchEvent(new (F().Event)(ev)); };
+      $("#wt-pa").click(); ok("P&A filter is optional", /2351 matching/.test($("#wt-count").textContent));
+      $("#wt-pa").click();
+      for (const [k,n] of [["pilot",3894],["north_sea_south",2942],["norwegian_sea",1146],["barents",299],["northern-lights",8],["smeaheia",6],["sleipner",340]]) {
+        change("#wt-area", k, "change");
+        ok("selector uses the published scope: " + k, $("#wt-count").textContent.startsWith(n + " matching"));
+      }
+      change("#wt-search","15/9-13","input");
+      ok("Sleipner equipment tests stay off axis and cite the original PDF", !!await waitFor(() => tr(45)) &&
+        [...tr(45).querySelectorAll("summary")].filter(s=>s.textContent.includes("equipment test · Not positioned")).length === 2 &&
+        ![...tr(45).querySelectorAll("rect title")].some(t=>t.textContent.includes("83 bar") || t.textContent.includes("17 bar")) &&
+        /#page=123$/.test(tr(45).querySelector("a[href*='sources/sleipner']")?.href));
+      change("#wt-search","no-such-borehole","input");
+      ok("empty search clears the previous evidence", !$(".well-track") && /No matching boreholes/.test($("#wt-result").textContent));
+      change("#wt-area","all","change"); change("#wt-search","8951","input");
+      ok("exact ID opens Aurora, without a transferred rule result", !!await waitFor(() => tr(8951)) && /2697.5/.test(tr(8951).textContent) && /not evaluated for this well/.test(tr(8951).textContent));
+      const bar = tr(8951).querySelector("rect[data-track-row]");
+      bar.dispatchEvent(new (F().MouseEvent)("click",{bubbles:true}));
+      ok("depth bar opens its cited source row", tr(8951).querySelector(`[data-row-id='${bar.dataset.trackRow}']`).open);
+      change("#wt-search","10166","input");
+      ok("missing evidence is unknown, not failed", !!await waitFor(() => tr(10166)) && /No positioned intervals/.test(tr(10166).textContent) && !tr(10166).querySelector("svg"));
+      F().location.hash="tracks/5839/"+"0".repeat(64);
+      ok("missing pinned tracks do not substitute a different build", !!await waitFor(() => /Track data unavailable/.test($("#view").textContent) && !$(".well-track")));
+      return;
+    }
     // --- Data explorer
     await waitFor(() => $("#tb")); ok("data page loads, table list", $("#tb").options.length > 20, $("#tb").options.length + " options");
     $("#tb").value = "wellbore_exploration"; $("#tb").dispatchEvent(new Event("change", { bubbles: true }));
@@ -182,9 +249,9 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     $("#si-en").click(); await sleep(1500);
     $("#sv-inspect").click(); await sleep(500); ok("Close inspector removes both parts", !D().querySelector("#sec-insp") && !D().querySelector("#sec-inspc") && /Inspect seismic/.test($("#sv-inspect").textContent));
     // --- seven tabs; secondary pages under a sub-navigation; architecture charts with pan and zoom
-    ok("the header has seven tabs (Subsurface model first; the 3D views are merged)", D().querySelectorAll("#links a").length === 7 && D().querySelector("#links a").dataset.p === "earth", [...D().querySelectorAll("#links a")].map((a) => a.textContent).join(", "));
+    ok("the header leads with the screen, then tracks, research and log", [...D().querySelectorAll("#links a")].map(a => a.dataset.p).join(",") === "screen,tracks,research,log");
     F().location.hash = "layers"; await waitFor(() => D().querySelector(".doc .subnav"), 30000);
-    ok("Layers opens under Validation with its sub-navigation", D().querySelector("#links a.on")?.dataset.p === "validation" && D().querySelector(".subnav a.on")?.textContent === "Layers");
+    ok("Layers opens under Research with Validation sub-navigation", D().querySelector("#links a.on")?.dataset.p === "research" && D().querySelector(".subnav a.on")?.textContent === "Layers");
     F().location.hash = "architecture"; await waitFor(() => D().querySelectorAll(".pz svg").length === 2, 60000);
     const pz = D().querySelector(".pz"), t0 = D().querySelector(".pzin").style.transform; pz.dispatchEvent(new (F().WheelEvent)("wheel", { deltaY: -100, clientX: 300, clientY: 200, bubbles: true, cancelable: true }));
     ok("architecture: two mermaid charts; wheel zooms", D().querySelectorAll(".pz svg").length === 2 && D().querySelector(".pzin").style.transform !== t0);
@@ -209,7 +276,7 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
       ok("map layers are drawn (coast, faults)", $("#pe").data.some((d) => d.meta?.hl === "map:faults") && $("#pe").data.some((d) => d.meta?.hl === "map:coast"));
       ok("presets and the automatic threshold are there", D().querySelectorAll("[data-pre]").length === 4 && !!$("#e-pa"));
       const sel = $("#sv-id"); sel.value = sel.options[1]?.value || ""; fire(sel, "change");
-      ok("a seismic section is drawn in the model", !!(await waitFor(() => $("#pe").data.some((d) => d.type === "surface" && d.name === sel.value), 90000)));
+      ok("a seismic section is drawn in the model", !!(await waitFor(() => $("#pe").data.some((d) => d.type === "surface" && (d.name || "").startsWith(sel.value + " ")), 90000)));
       $("#sv-inspect").click(); ok("the seismic inspector opens from the model page", !!(await waitFor(() => $("#si2d") || $("#siinfo"), 60000)));
       $("#sv-inspect").click();
       { const r = D().querySelector('[name="sv-ax"][value="time"]'); r.checked = true; fire(r, "change"); ok("a seismic time slice is drawn, with its time and depth stated", !!(await waitFor(() => $("#pe").data.some((d) => d.type === "surface" && / t \d+ ms/.test(d.name || "")) && /ms two-way time/.test($("#sv-lab").textContent), 90000)), $("#sv-lab").textContent); }
@@ -219,6 +286,6 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     ok("core-porosity comparison shows paired held-out error and stays research only", /Paired 90% gain interval/.test($("#sec-r-core")?.textContent || "") && /Does not feed production probabilities/.test($("#sec-r-core")?.textContent || ""));
     { F().location.hash = "sensitivity"; ok("the sensitivity page lists constants with their effect", !!(await waitFor(() => /Sensitivity and checks/.test($("#view").textContent) && D().querySelectorAll("#view table tr").length > 5, 60000))); }
   } catch (e) { R.push("ERROR " + e); }
-  document.getElementById("out").textContent = R.join("\n") + "\nDONE";
+  finally { document.getElementById("out").textContent = R.join("\n") + "\nDONE"; }
 })();
 </script>

@@ -1,9 +1,11 @@
 """Dataset and model lineage API: what exists, where it came from, and what was used."""
 import json
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from se.config import AREAS, OUT
+from se.modeling import well_tie
 from se.modeling.relations import relation_plan
 from se.modeling.rock_porosity import RESULT as ROCK_POROSITY_OUT
 from se.modeling.seismic_coverage import RELATIVE_OUT as COVERAGE_OUT
@@ -91,3 +93,52 @@ def rock_porosity():
     if not path.is_file():
         raise HTTPException(404, "Rock-physics porosity comparison has not been run")
     return json.loads(path.read_text())
+
+
+TieVersion = Annotated[str, Query(pattern=f"^{well_tie.VERSION}$")]
+
+
+def _tie(version: str) -> dict:
+    try:
+        return well_tie.load(OUT, version)
+    except FileNotFoundError as e:
+        raise HTTPException(404, "well-tie receipt unavailable") from e
+    except ValueError as e:
+        raise HTTPException(503, str(e)) from e
+
+
+@router.get("/well-ties")
+def well_ties():
+    rows = []
+    for path in sorted((OUT / well_tie.STORE).glob("*.json")):
+        d = _tie(path.stem)
+        rows.append({"version": path.stem, **{k: d[k] for k in ("well", "npdid", "survey", "survey_label", "registration", "window_ms", "limits", "credit")},
+                     "inline": d["trace"]["inline"], "crossline": d["trace"]["crossline"], "trace_distance_m": d["trace"]["distance_m"]})
+    return rows
+
+
+@router.get("/well-ties/receipt")
+def well_tie_receipt(version: TieVersion):
+    return {"version": version, **_tie(version)}
+
+
+@router.get("/well-ties/compare")
+def well_tie_compare(
+    version: TieVersion,
+    hz: Annotated[float, Query(ge=10, le=50)] = 25,
+    phase: Annotated[float, Query(ge=-90, le=90)] = 0,
+    polarity: Annotated[int, Query(ge=-1, le=1)] = 1,
+    shift: Annotated[int, Query(ge=-40, le=40, multiple_of=2)] = 0,
+    top: Annotated[float | None, Query(ge=0, le=5000)] = None,
+    base: Annotated[float | None, Query(ge=0, le=5000)] = None,
+    dv_pct: Annotated[float, Query(ge=-20, le=20)] = 0,
+    drho_pct: Annotated[float, Query(ge=-10, le=10)] = 0,
+):
+    if polarity not in (-1, 1):
+        raise HTTPException(422, "polarity must be +1 or -1")
+    data = _tie(version)
+    try:
+        return {"version": version, **well_tie.compare(data, hz=hz, phase=phase, polarity=polarity, shift=shift,
+                                                       top=top, base=base, dv=dv_pct / 100, drho=drho_pct / 100)}
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
