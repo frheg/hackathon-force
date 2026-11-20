@@ -1,5 +1,9 @@
 // Subsurface Evidence UI. One file, no build. Every number comes from /api; every page says what it shows.
 const $$ = (s, r = document) => [...r.querySelectorAll(s)], $ = (s, r = document) => r.querySelector(s), NOTARGET = /^(catalog|table\/|targets|last_job|log|docs-list|seismic\/|provenance\/|earth\/)/;
+const FEATN = { lp: "unit rate", lnb: "neighbours' rate", sand: "sand share", shale: "shale share", zb_km: "depth below seabed", phi_athy: "compaction porosity", deltaic: "deltaic unit",
+  lkit: "distance to mature source", lkit_max: "distance to source mature at maximum burial", lkit_gas: "distance to gas-mature source", mature: "source below in the oil window", lfault: "distance to a mapped fault",
+  on_high: "on a structural high", lclos: "structural closure", salt: "salt thickness", lcharge: "migrated charge", lcharge_max: "migrated charge at maximum burial",
+  p_charge: "reached by migrating oil", p_charge_max: "reached by migrating oil at maximum burial" };
 let META, LAYERS, TARGET = localStorage.getItem("target") || "green_clay", map = null, COAST = null, TARGETS = null;
 // Every request is tracked: the header shows what is running and for how long, a bar runs under the header, and stages show a centred notice.
 const BUSY = new Map(); let busyId = 0;
@@ -17,9 +21,9 @@ const note = (title, ...l) => `<div class="note"><b>${title}</b>${l.map((x) => `
 const STATUS_WORDS = { helps: "helps", no_evidence: "no measurable help", hurts: "makes it worse", not_built: "not built / no data" };
 const evTip = (l) => { const e = l.evidence; if (!e) return l.status === "not_built" ? "Nothing to test: no code or no data for this evidence." : ""; const verb = l.status === "helps" ? "improved" : l.status === "hurts" ? "worsened" : "did not measurably change";
   return `On wells held out of fitting, adding this ${verb} prediction accuracy by ${sg(e.delta_gain)} (90% range ${sg(e.p05)} to ${sg(e.p95)}), compared with ${e.compared_with}${e.units ? `, on ${e.units} units` : ""}. Range entirely above 0 = helps; spanning 0 = no evidence; entirely below 0 = worse.`; };
-const NAV = [["earth", "Earth model"], ["scene", "3D"], ["targets", "Targets"], ["units", "Units"], ["validation", "Validation"], ["data", "Data"], ["architecture", "Architecture"], ["log", "Log"]];
+const NAV = [["earth", "Subsurface model"], ["targets", "Targets"], ["units", "Units"], ["validation", "Validation"], ["data", "Data"], ["architecture", "Architecture"], ["log", "Log"]];
 // secondary pages live under one tab each, reached by the sub-navigation at the top of that tab (old links keep working)
-const SUB = { units: [["units", "All units"], ["contradictions", "Most surprising"]], validation: [["validation", "Scorecard"], ["layers", "Layers"], ["knowledge", "Geology rules"]],
+const SUB = { earth: [["earth", "Model"], ["scene", "Saved targets (depth along the hole)"]], units: [["units", "All units"], ["contradictions", "Most surprising"]], validation: [["validation", "Scorecard"], ["layers", "Layers"], ["knowledge", "Geology rules"]],
   data: [["data", "Catalog"], ["lineage", "Lineage"], ["workflows", "Other tools"]], architecture: [["architecture", "Charts"], ["start", "Overview and terms"]] };
 const PARENT = Object.fromEntries(Object.entries(SUB).flatMap(([k, v]) => v.map(([p]) => [p, k]))); PARENT.unit = "units";
 // Colour palettes for shares (low to high). `stops` colour sheets, map shading and legends; `bins` colour the four stick classes (the last is the strongest: above the colour range).
@@ -70,8 +74,11 @@ function stage2(inner, readView) {
     <div class="sb desk-pane" id="deskPane" role="tabpanel" aria-labelledby="deskTab" hidden>
       <header class="desk-head"><div class="desk-heading"><h2>${DESK_NAME}</h2><button class="lnk" id="desk-clear" type="button">New thread</button></div><p id="desk-scope" class="tip"></p></header>
       <div id="desk-transcript" class="desk-transcript" role="log" aria-label="Conversation">
-        <div id="desk-samples" class="desk-samples"><p>Read the scene alongside Diskos reports and FactPages. Select a well interval in 3D to narrow the search.</p>
+        <div id="desk-samples" class="desk-samples"><p>An assistant for reading the model and its sources: Diskos reports, FactPages, and on the Earth model page the model's own numbers, tests and rules. Select a cell or a well interval to focus it.</p>
         <button class="lnk" type="button" data-question="What is observed and what is estimated in this view?">Explain this view</button>
+        <button class="lnk" type="button" data-question="Why does the selected cell have this probability, and what should I check before trusting it?">Why this number?</button>
+        <button class="lnk" type="button" data-question="Which assumptions does this rest on, and do their rules hold in this region?">Check the assumptions</button>
+        <button class="lnk" type="button" data-question="What would change this conclusion, and which data would settle it?">What would change it?</button>
         <button class="lnk" type="button" data-question="What does turning on neighbour evidence change, and what is still uncertain?">Explain neighbour evidence</button></div>
       </div>
       <form class="desk-form"><label for="desk-question">Question</label><textarea id="desk-question" rows="3" placeholder="Ask about this view or name a wellbore…" required minlength="3" maxlength="2000"></textarea>
@@ -124,7 +131,7 @@ const job = async () => { const j = await api("last_job"); $("#job").textContent
 let routeSeq = 0;
 const pageError = (e) => doc(`<div class="note warn"><b>Could not load this page</b><pre>${esc(String(e.stack || e).slice(0, 900))}</pre></div>`);
 function route() {
-  const [p, ...rest] = (location.hash.slice(1) || "scene").split("/");
+  const [p, ...rest] = (location.hash.slice(1) || "earth").split("/");
   const seq = ++routeSeq, live = () => seq === routeSeq;
   stageObserver?.disconnect(); closeDesk(); REDRAW.scene = REDRAW.insp = null;
   document.querySelectorAll("#links a").forEach((a) => {
@@ -133,7 +140,7 @@ function route() {
     if (selected) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   if (map) { map.remove(); map = null; } $("#view").innerHTML = '<div class="doc"><p class="tip">loading…</p></div>';
-  if (p === "map") { location.hash = "scene"; return; }
+  if (p === "map") { location.hash = "earth"; return; }  // old addresses land on the subsurface model
   const tl = $("#target")?.closest("label"); if (tl) tl.style.display = p === "earth" ? "none" : "";  // the evidence-engine target does not apply to the earth model  // the Map page was folded into 3D (top view, neighbour switch, fine estimate)
   (PAGES[p] || PAGES.start)(decodeURIComponent(rest.join("/")), live).then(() => {
     const sub = SUB[PARENT[p]], d = $("#view .doc");
@@ -186,6 +193,163 @@ async function minimap(host, box, label) {
     <rect x="${px(lo0)}" y="${py(la1)}" width="${px(lo1) - px(lo0)}" height="${py(la0) - py(la1)}" fill="rgba(224,33,138,0.25)" stroke="#e0218a" stroke-width="1.5"/>
     <text x="4" y="${H - 4}" font-size="9" fill="var(--mut)">North Sea · Norwegian Sea (62°N) · Barents Sea (69°N)</text></svg><div class="tip">${esc(label)}</div>`;
 }
+// layer colours: distinct, muted enough to sit under the viridis cells; one per group or formation, the same in the list and the scene
+const LAYC = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#86bcb6", "#d4a6c8", "#8cd17d", "#f1ce63", "#a0cbe8", "#ffbe7d", "#bab0ac"];
+const swatch = (c, kind = "fill") => `<span class="sw ${kind}" style="${kind === "text" ? `color:${c}` : `background:${c}`}" aria-hidden="true">${kind === "text" ? "Aa" : ""}</span>`;
+// EPSG:3035 (ETRS89 / LAEA Europe, GRS80) from lon/lat in degrees, in km: Snyder's ellipsoidal Lambert azimuthal equal-area (matches pyproj to the mm)
+const L3035 = (() => { const a = 6378137, e2 = 0.0066943800229, e = Math.sqrt(e2), r = Math.PI / 180, l0 = 10 * r, p0 = 52 * r;
+  const q = (p) => { const s = Math.sin(p); return (1 - e2) * (s / (1 - e2 * s * s) - (1 / (2 * e)) * Math.log((1 - e * s) / (1 + e * s))); };
+  const qp = q(Math.PI / 2), b1 = Math.asin(q(p0) / qp), Rq = a * Math.sqrt(qp / 2), D = (a * (Math.cos(p0) / Math.sqrt(1 - e2 * Math.sin(p0) ** 2))) / (Rq * Math.cos(b1));
+  return (lon, lat) => { const l = lon * r - l0, b = Math.asin(q(lat * r) / qp), B = Rq * Math.sqrt(2 / (1 + Math.sin(b1) * Math.sin(b) + Math.cos(b1) * Math.cos(b) * Math.cos(l)));
+    return [(4321000 + B * D * Math.cos(b) * Math.sin(l)) / 1000, (3210000 + (B / D) * (Math.cos(b1) * Math.sin(b) - Math.sin(b1) * Math.cos(b) * Math.cos(l))) / 1000]; }; })();
+// point at a layer in a list (an element with data-hl) to pick out its traces in a 3D plot (traces with meta.hl): it comes forward, a surface takes
+// the layer's colour, lines get wider, everything else that has a layer fades. Leaving the list restores the drawing.
+function hoverLayers(list, plotEl, colourOf) {
+  let on = null;
+  const set = (name) => { const gd = plotEl(); if (!gd?.data?.length) return; const d = gd.data;
+    if (name == null) { const o = gd._hl0; gd._hl0 = null; if (!o) return; const sf = o.filter((x) => d[x.i]?.type === "surface"), ln = o.filter((x) => d[x.i] && d[x.i].type !== "surface");
+      if (o.length) Plotly.restyle(gd, { opacity: o.map((x) => x.op) }, o.map((x) => x.i)); if (sf.length) Plotly.restyle(gd, { colorscale: sf.map((x) => x.cs) }, sf.map((x) => x.i)); if (ln.length) Plotly.restyle(gd, { "line.width": ln.map((x) => x.lw) }, ln.map((x) => x.i)); return; }
+    if (!gd._hl0) gd._hl0 = d.map((t, i) => (t.meta?.hl != null ? { i, op: t.opacity ?? 1, cs: t.colorscale, lw: t.line?.width ?? 2 } : null)).filter(Boolean);
+    const o = gd._hl0, hit = (x) => d[x.i].meta.hl === name, c = colourOf?.(name), sf = o.filter((x) => d[x.i].type === "surface"), ln = o.filter((x) => d[x.i].type !== "surface" && d[x.i].mode !== "text");
+    if (!o.some(hit)) return;
+    Plotly.restyle(gd, { opacity: o.map((x) => (hit(x) ? Math.max(0.9, x.op) : Math.min(x.op, 0.12))) }, o.map((x) => x.i));
+    if (sf.length && c) Plotly.restyle(gd, { colorscale: sf.map((x) => (hit(x) ? [[0, c], [1, c]] : x.cs)) }, sf.map((x) => x.i));
+    if (ln.length) Plotly.restyle(gd, { "line.width": ln.map((x) => (hit(x) ? x.lw * 2.5 : x.lw)) }, ln.map((x) => x.i)); };
+  list.addEventListener("mouseover", (e) => { const n = e.target.closest("[data-hl]")?.dataset.hl ?? null; if (n !== on) { on = n; set(n); } });
+  list.addEventListener("mouseleave", () => { on = null; set(null); });
+}
+// CO2 capacity of a region (P10.4): per unit P10 / P50 / P90, and the Sodir atlas aquifers beside our numbers for the same units
+const capTable = (K) => `<p><b>CO2 storage capacity</b>, ${K.realisations} correlated realisations, efficiency ${K.efficiency.p10 * 100}–${K.efficiency.p90 * 100} % (P10–P90, ${esc(K.efficiency.source)}): region total ${K.total_mt.p10.toLocaleString()} / <b>${K.total_mt.p50.toLocaleString()}</b> / ${K.total_mt.p90.toLocaleString()} Mt (P10 / P50 / P90).</p>
+  <table style="font-size:12px"><tr><th>unit<th class=r>P10<th class=r>P50<th class=r>P90 Mt<th class=r>pore/bulk</tr>${K.units.slice(0, 8).map((u) => `<tr><td>${esc(u.unit)}<td class=r>${Math.round(u.p10_mt)}<td class=r><b>${Math.round(u.p50_mt)}</b><td class=r>${Math.round(u.p90_mt)}<td class=r>${u.pore_over_bulk.toFixed(2)}</tr>`).join("")}</table>
+  ${K.atlas?.length ? `<p class="tip">Against the Sodir CO2 Storage Atlas (2011): ${K.atlas.map((a) => `${esc(a.aquifer)}: atlas ${a.atlas_capacity_gt} Gt, ours ${a.our_capacity_at_atlas_E_gt} Gt at the atlas efficiency (P50 ${a.our_capacity_p50_gt} Gt with ours); pore/bulk ${a.atlas_pore_over_bulk ?? "–"} vs ${a.our_pore_over_bulk}; density ${a.atlas_density_t_rm3} vs ${a.our_density_t_rm3} t/m³`).join("; ")}. ${esc(K.caveat)}.</p>` : ""}`;
+// ---- the seismic inspector, one module since the 3D views were merged (P10): a side pane with a 2D section or time slice and a 3D cube or
+// full block. ctx: SV (surveys), LN (line cache), sv (the selected survey: id, axis, pos, v, gain, base), later (redraw the main view).
+function seismicKit(ctx) {
+  const { SV, LN, later } = ctx, st = { get sv() { return ctx.sv; } };
+  // ---- seismic inspector: a side pane with a 2D view (section or time slice) and a 3D cube view. It shares the survey, the line and the baseline with the big scene.
+  const IN = { el: null, mode: "inline", il: null, xl: null, t: 1000, gain: 1, cmap: "seis", depth: false, clear: false, enrich: false, lay: "only2d", detail: 350000, sid: "", cache: new Map(), wells: [], seq: 0 };
+  const WELLC = "#00b84a";  // wells: a saturated green, away from the blue-white-red and grey seismic colours
+  const CM = { seis: [[0, "#2c5aa0"], [0.5, "#f7f7f7"], [1, "#b2182b"]], gray: [[0, "#000000"], [1, "#ffffff"]] };
+  // see-through: near-zero amplitudes (the white or mid-grey of the colour scale) become transparent, so only reflections remain
+  const CLEAR = { seis: [[0, "rgba(44,90,160,1)"], [0.4, "rgba(120,150,200,0.6)"], [0.5, "rgba(247,247,247,0)"], [0.6, "rgba(210,120,120,0.6)"], [1, "rgba(178,24,43,1)"]],
+    gray: [[0, "rgba(0,0,0,1)"], [0.4, "rgba(90,90,90,0.6)"], [0.5, "rgba(128,128,128,0)"], [0.6, "rgba(170,170,170,0.6)"], [1, "rgba(255,255,255,1)"]] };
+  const OPQ = [[0, 1], [0.38, 0.55], [0.5, 0], [0.62, 0.55], [1, 1]];
+  const cmap = () => (IN.clear ? CLEAR : CM)[IN.cmap];
+  const icache = (k, f) => (IN.cache.has(k) ? Promise.resolve(IN.cache.get(k)) : f().then((v) => (IN.cache.set(k, v), v)));
+  const Yv = (t) => (IN.depth ? (t / 2) * st.sv.v : t), Ylab = () => (IN.depth ? "Depth preview (m, uncalibrated)" : "Survey two-way time (ms)");
+  const inspectLater = (() => { let t; return () => { clearTimeout(t); t = setTimeout(inspectDraw, 90); }; })();
+  const nearIdx = (arr, v) => arr.reduce((b, x, i) => (Math.abs(x - v) < Math.abs(arr[b] - v) ? i : b), 0);
+  function inspectSetup(m) { const L = LN[m.id], set = (id, max, val) => { const e = $(id); e.min = 0; e.max = max; e.value = val; };
+    set("#si-il", L.inline.length - 1, nearIdx(L.inline, IN.il)); set("#si-xl", L.crossline.length - 1, nearIdx(L.crossline, IN.xl)); const t = $("#si-t"); t.min = m.t0_ms; t.max = m.t_end_ms; t.step = m.dt_ms; t.value = IN.t; }
+  async function inspectDraw() {
+    const sv = st.sv, my = ++IN.seq, m = SV.find((x) => x.id === sv.id); if (!m || !IN.el) return;
+    if (IN.sid !== sv.id) { IN.sid = sv.id; IN.cam = IN.blockCam = null; if (!LN[sv.id]) LN[sv.id] = await api("seismic/lines", { survey: sv.id }); const L = LN[sv.id]; IN.il = L.inline[L.inline.length >> 1]; IN.xl = L.crossline[L.crossline.length >> 1]; IN.t = Math.round((m.t0_ms + m.t_end_ms) / 2); IN.wells = await api("seismic/wells", { survey: sv.id }); inspectSetup(m); }
+    if (!IN.el) return;
+    const L = LN[sv.id], b = sv.base || "", k = (...a) => [sv.id, b, ...a].join("|"), q = (o) => ({ survey: sv.id, ...(b ? { baseline: b } : {}), ...o });
+    const en = IN.enrich ? await Promise.all([icache(k("ei", IN.il, sv.v), () => api("seismic/enrich", { survey: sv.id, axis: "inline", index: IN.il, v: sv.v })), icache(k("ex", IN.xl, sv.v), () => api("seismic/enrich", { survey: sv.id, axis: "crossline", index: IN.xl, v: sv.v }))]) : null;
+    const [inl, xln, tsl] = await Promise.all([icache(k("i", IN.il), () => api("seismic/curtain", q({ axis: "inline", index: IN.il, tstep: 1 }))), icache(k("x", IN.xl), () => api("seismic/curtain", q({ axis: "crossline", index: IN.xl, tstep: 1 }))), icache(k("t", IN.t), () => api("seismic/slice", q({ t_ms: IN.t })))]);
+    if (my !== IN.seq || !IN.el) return;
+    const p99 = m.amp_p99, real = (v) => (v == null ? null : (v / 127) * p99), zm = p99 / IN.gain, cs = cmap(), cs3 = CM[IN.cmap], see = IN.clear ? { opacityscale: OPQ } : {}, stepI = Math.abs(L.inline[1] - L.inline[0]) || 1, stepX = Math.abs(L.crossline[1] - L.crossline[0]) || 1;
+    $("#si-ilv").textContent = IN.il; $("#si-xlv").textContent = IN.xl; $("#si-tv").textContent = Math.round(tsl.t_ms) + " ms"; $("#si-gv").textContent = IN.gain.toFixed(1) + "×";
+    $("#si-title").textContent = `${m.name}: ` + ({ inline: `inline ${IN.il}`, crossline: `crossline ${IN.xl}`, time: `time slice at ${Math.round(tsl.t_ms)} ms` }[IN.mode]); $("#si-mode-lab").textContent = { inline: `Inline section ${IN.il}`, crossline: `Crossline section ${IN.xl}`, time: `Time slice at ${Math.round(tsl.t_ms)} ms` }[IN.mode];
+    // ---- 2D view
+    let t2, lay2; const wl = [];
+    if (IN.mode === "time") {
+      t2 = [{ type: "heatmap", x: tsl.xl, y: tsl.il, z: tsl.amp.map((r) => r.map(real)), colorscale: cs, zmin: -zm, zmax: zm, colorbar: { thickness: 8, len: 0.8 }, hovertemplate: "Inline %{y}<br>Crossline %{x}<br>Amplitude %{z:.0f}<extra></extra>" }];
+      IN.wells.forEach((w) => wl.push({ type: "scatter", mode: "markers+text", x: [w.xl], y: [w.il], text: [w.name], textposition: "top center", marker: { symbol: "x", size: 12, color: WELLC, line: { width: 2 } }, textfont: { color: WELLC }, hovertemplate: `Well ${esc(w.name)}<br>${w.dist_m} m from the nearest trace<extra></extra>`, showlegend: false }));
+      lay2 = { xaxis: { title: "Crossline number" }, yaxis: { title: "Inline number" } };
+    } else {
+      const cu = IN.mode === "inline" ? inl : xln, xs = IN.mode === "inline" ? cu.xl : cu.il, ys = cu.t_ms.map(Yv), lab = IN.mode === "inline" ? [`Inline ${cu.index}`, "Crossline"] : [`Crossline ${cu.index}`, "Inline"];
+      t2 = [{ type: "heatmap", x: xs, y: ys, z: cu.amp.map((r) => r.map(real)), colorscale: cs, zmin: -zm, zmax: zm, colorbar: { thickness: 8, len: 0.8 }, hovertemplate: `${lab[0]}<br>${lab[1]} %{x}<br>${IN.depth ? "Depth %{y:.0f} m" : "Time %{y:.0f} ms"}<br>Amplitude %{z:.0f}<extra></extra>` }];
+      IN.wells.filter((w) => (IN.mode === "inline" ? Math.abs(w.il - IN.il) <= stepI * 1.5 : Math.abs(w.xl - IN.xl) <= stepX * 1.5)).forEach((w) => { const x = IN.mode === "inline" ? w.xl : w.il; wl.push({ type: "scatter", mode: "lines+text", x: [x, x], y: [ys[0], ys.at(-1)], text: [w.name, ""], textposition: "bottom right", line: { color: WELLC, width: 3 }, textfont: { color: WELLC, size: 12 }, hovertemplate: `Well ${esc(w.name)}<br>${w.dist_m} m from the nearest trace<extra></extra>`, showlegend: false }); });
+      lay2 = { xaxis: { title: IN.mode === "inline" ? "Crossline number (west to east)" : "Inline number" }, yaxis: { title: Ylab(), autorange: "reversed" } };
+    }
+    const HC = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666"];
+    if (en && IN.mode !== "time") {
+      const E = IN.mode === "inline" ? en[0] : en[1], step = IN.mode === "inline" ? stepX : stepI, wide = step * 6;
+      E.horizons.forEach((h, i) => wl.push({ type: "scatter", mode: "lines", x: h.along, y: h.twt.map((t) => (t == null ? null : Yv(t))), line: { color: HC[i % HC.length], width: 2 }, connectgaps: false, name: h.name.replace(" GP", " Gp").replace(" FM", " Fm"), hovertemplate: `${esc(h.name)} (interpreted horizon)<br>${IN.depth ? "%{y:.0f} m" : "%{y:.0f} ms"}<extra></extra>`, showlegend: true }));
+      E.wells.filter((w) => (IN.mode === "inline" ? Math.abs(w.il - IN.il) <= stepI * 1.5 : Math.abs(w.xl - IN.xl) <= stepX * 1.5)).forEach((w) => { const x0 = IN.mode === "inline" ? w.xl : w.il;
+        if (w.gr) wl.push({ type: "scatter", mode: "lines", x: w.gr.v.map((g) => x0 + (Math.min(Math.max(g, 0), 150) / 150) * wide), y: w.gr.twt.map(Yv), line: { color: "#7a3ff2", width: 1.4 }, customdata: w.gr.v.map((g, i) => [g, w.gr.tvdss[i]]), hovertemplate: `${esc(w.name)} gamma ray %{customdata[0]:.0f} gAPI<br>%{customdata[1]:.0f} m below sea level<br>${esc(w.log_source)}<extra></extra>`, showlegend: false });
+        const tp = (w.tops || []).filter((t) => t.level === "GROUP" || t.level === "FORMATION");
+        if (tp.length) wl.push({ type: "scatter", mode: "markers+text", x: tp.map(() => x0), y: tp.map((t) => Yv(t.twt)), text: tp.map((t) => (t.level === "GROUP" ? t.name.replace(" GP", "") : "")), textposition: "middle left", textfont: { size: 9, color: css("--ink") }, marker: { symbol: "line-ew-open", size: 14, color: css("--ink"), line: { width: 2 } }, customdata: tp.map((t) => [t.name, t.md, t.tvdss]), hovertemplate: `${esc(w.name)}: top %{customdata[0]}<br>MD %{customdata[1]:.0f} m, %{customdata[2]:.0f} m below sea level<extra>Sodir formation top</extra>`, showlegend: false }); });
+    }
+    const g2 = $("#si2d"); if (!g2 || !IN.el) return; if (g2.offsetWidth) await plot(g2, [...t2, ...wl], { ...lay2, margin: { l: 54, r: 10, t: 6, b: 40 }, uirevision: IN.mode + sv.id, showlegend: !!en, legend: { orientation: "h", y: -0.12, font: { size: 10 } } });
+    g2.removeAllListeners?.("plotly_hover"); g2.on && g2.on("plotly_hover", (e) => { const pt = e.points?.[0]; if (!pt || pt.data.type !== "heatmap") return; let la = "", pos = "";
+      if (IN.mode === "time") { const i = tsl.il.indexOf(pt.y), j = tsl.xl.indexOf(pt.x); pos = `inline ${pt.y}, crossline ${pt.x}, ${Math.round(tsl.t_ms)} ms`; } else { const cu = IN.mode === "inline" ? inl : xln, i = nearIdx(IN.mode === "inline" ? cu.xl : cu.il, pt.x); la = ` · ${cu.lat[i]}° N, ${cu.lon[i]}° E · ${cu.dist_km[i]} km along the line`; pos = `${IN.mode === "inline" ? "inline " + cu.index + ", crossline " + pt.x : "crossline " + cu.index + ", inline " + pt.x}, ${IN.depth ? Math.round(pt.y) + " m" : Math.round(pt.y) + " ms"}`; }
+      $("#sihov").innerHTML = `<b>${pos}</b> · amplitude <b>${Math.round(pt.z)}</b> (${(pt.z / p99).toFixed(2)} of the 99th percentile, ${p99.toFixed(0)})${la}`; });
+    // ---- 3D cube view: the two sections and the time slice through a transparent box, with our wells
+    const tmin = m.t0_ms, tmax = m.t_end_ms, zt = -Yv(tmin), zb = -Yv(tmax), pl = [];
+    [["inline", inl], ["crossline", xln]].forEach(([nm, cu]) => pl.push({ type: "surface", x: cu.t_ms.map(() => cu.x), y: cu.t_ms.map(() => cu.y), z: cu.t_ms.map((t) => cu.x.map(() => -Yv(t))), surfacecolor: cu.amp.map((r) => r.map(real)), cmin: -zm, cmax: zm, colorscale: cs3, ...see, showscale: false, opacity: IN.clear || IN.mode === nm ? 1 : 0.72, name: nm, lighting: { ambient: 1, diffuse: 0 }, hovertemplate: `${nm} ${cu.index}<br>${IN.depth ? "depth" : "time"} %{z:.0f}<br>amplitude %{surfacecolor:.0f}<extra></extra>` }));
+    const tz = -Yv(tsl.t_ms); pl.push({ type: "surface", x: tsl.x, y: tsl.y, z: tsl.x.map((r) => r.map((v) => (v == null ? null : tz))), surfacecolor: tsl.amp.map((r) => r.map(real)), cmin: -zm, cmax: zm, colorscale: cs3, ...see, showscale: false, opacity: IN.clear || IN.mode === "time" ? 1 : 0.72, name: "time slice", lighting: { ambient: 1, diffuse: 0 }, hovertemplate: `time slice ${Math.round(tsl.t_ms)} ms<br>amplitude %{surfacecolor:.0f}<extra></extra>` });
+    const ring = [...m.footprint, m.footprint[0]].map((p) => [KMX(p[1]), KMY(p[0])]), ox = [], oy = [], oz = [];
+    [zt, zb].forEach((z) => ring.forEach(([x, y]) => { ox.push(x); oy.push(y); oz.push(z); })); ox.push(null); oy.push(null); oz.push(null); ring.slice(0, -1).forEach(([x, y]) => { ox.push(x, x, null); oy.push(y, y, null); oz.push(zt, zb, null); });
+    pl.push({ type: "scatter3d", mode: "lines", x: ox, y: oy, z: oz, line: { color: css("--ink"), width: 2 }, hoverinfo: "skip", name: "survey box", showlegend: false });
+    if (en) {
+      [[en[0], inl, "xl"], [en[1], xln, "il"]].forEach(([E, cu, key]) => E.horizons.forEach((h, i) => { const pos = new Map(cu[key].map((v, j) => [v, j]));
+        const hx = [], hy = [], hz = []; h.along.forEach((a, j) => { const q = pos.get(a); if (q == null || h.twt[j] == null) { hx.push(null); hy.push(null); hz.push(null); } else { hx.push(cu.x[q]); hy.push(cu.y[q]); hz.push(-Yv(h.twt[j])); } });
+        pl.push({ type: "scatter3d", mode: "lines", x: hx, y: hy, z: hz, line: { color: HC[i % HC.length], width: 5 }, name: h.name, hovertemplate: `${esc(h.name)}<extra>interpreted horizon</extra>`, showlegend: false }); }));
+      en[0].wells.filter((w) => w.gr).forEach((w) => pl.push({ type: "scatter3d", mode: "lines", x: w.gr.twt.map(() => w.x), y: w.gr.twt.map(() => w.y), z: w.gr.twt.map((t) => -Yv(t)), line: { width: 10, color: w.gr.v, cmin: 0, cmax: 150, colorscale: [[0, "#f2d74e"], [0.5, "#8c9a4b"], [1, "#5b3a1a"]] }, customdata: w.gr.v, hovertemplate: `${esc(w.name)} gamma ray %{customdata:.0f} gAPI<extra>${esc(w.log_source)}</extra>`, showlegend: false }));
+    }
+    IN.wells.forEach((w) => pl.push({ type: "scatter3d", mode: "lines+text", x: [w.x, w.x], y: [w.y, w.y], z: [zt, zb], text: [w.name, ""], textposition: "top center", line: { color: WELLC, width: 9 }, textfont: { color: WELLC, size: 13 }, hovertemplate: `Well ${esc(w.name)}<extra></extra>`, showlegend: false }));
+    const xs3 = ring.map((r) => r[0]), ys3 = ring.map((r) => r[1]), dx = Math.max(...xs3) - Math.min(...xs3) || 1, dy = Math.max(...ys3) - Math.min(...ys3) || 1, step = (IN.depth ? 1000 : 1000), ticks = Array.from({ length: Math.floor(Yv(tmax) / step) + 1 }, (_, i) => i * step);
+    const ax = (t) => ({ title: t, gridcolor: css("--rule"), color: css("--mut"), showbackground: false });
+    if (IN.lay === "block") { await blockDraw(m, en); return; }
+    // keep the cube's camera across redraws (slider moves, gain, enrich): read it back from the live scene, as in the big scene
+    let cam3 = null; if ($("#si3d")?.data?.[0]?.type === "surface") try { cam3 = $("#si3d")._fullLayout.scene._scene.getCamera(); } catch {}
+    if (cam3) IN.cam = cam3;
+    const g3 = $("#si3d"); if (!g3 || !IN.el) return; if (g3.offsetWidth) await plot3(g3, pl, { margin: { l: 0, r: 0, t: 0, b: 0 }, uirevision: sv.id + IN.depth, showlegend: false, scene: { aspectmode: "manual", aspectratio: { x: 1, y: Math.max(dy / dx, 0.2), z: 0.55 }, camera: IN.cam || { eye: { x: 1.5, y: -1.6, z: 0.9 } }, xaxis: ax("East (km)"), yaxis: ax("North (km)"), zaxis: { ...ax(Ylab()), tickvals: ticks.map((v) => -v), ticktext: ticks.map(String) } } });
+    const enInfo = en ? `<tr><td>Enriched<td>${en[0].horizon_source ? esc(en[0].horizon_source) + " (coloured lines); " : "no interpreted horizons for this survey; "}gamma ray: ${en[0].wells.filter((w) => w.gr).map((w) => esc(w.name) + " (" + esc(w.log_source) + ")").join(", ") || "none"}; formation tops: Sodir. Depth to time: ${esc((en[0].time_model || []).join("; "))}. Purple wiggle: gamma ray (left = low, sand-like; right = high, shale-like).` : "";
+    $("#siinfo").innerHTML = `<table style="font-size:12px">${enInfo}<tr><td>Survey<td><b>${esc(m.name)}</b>${m.survey_year ? ` (surveyed ${m.survey_year}, processed ${"20" + m.processing})` : ""}<tr><td>Traces<td>${m.traces_total.toLocaleString()} in the survey, every ${m.decimation}th inline and crossline shown (${m.traces_kept.toLocaleString()})<tr><td>Sampling<td>${m.dt_ms} ms, ${Math.round(m.t0_ms)} to ${Math.round(m.t_end_ms)} ms two-way time<tr><td>Lines<td>inline ${m.inline[0]}–${m.inline[1]}, crossline ${m.crossline[0]}–${m.crossline[1]}${m.bin_m ? `, trace spacing about ${Math.round(m.bin_m)} m` : ""}<tr><td>Amplitude<td>99th percentile ${p99.toFixed(0)}; colours span ±${zm.toFixed(0)}${sv.base ? "; <b>difference</b> against " + esc(sv.base) : ""}<tr><td>Our wells<td>${IN.wells.length ? IN.wells.map((w) => esc(w.name) + " (" + w.dist_m + " m from a trace)").join(", ") : "none inside this survey"}<tr><td>Credit<td>${esc(m.credit)}</table>`;
+  }
+  // ---- the whole survey as one transparent volume (inline x crossline x time grid): strong reflections opaque, quiet zones see-through,
+  // so interpreted horizons, wells and gamma ray inside stay visible. Thinned on the server to about 350,000 values.
+  async function blockDraw(m, en) {
+    const sv = st.sv, c = await icache(["cube", sv.id, IN.detail].join("|"), () => api("seismic/cube", { survey: sv.id, max_points: IN.detail })); const g = $("#si3d"); if (!g || !IN.el || !g.offsetWidth) return;
+    const ni = c.il.length, nj = c.xl.length, nk = c.t_ms.length, X = [], Y = [], Z = [], V = [];
+    for (let i = 0; i < ni; i++) for (let j = 0; j < nj; j++) for (let k = 0; k < nk; k++) { X.push(c.xl[j]); Y.push(c.il[i]); Z.push(-Yv(c.t_ms[k])); V.push(c.amp[(i * nj + j) * nk + k]); }
+    const lim = 127 / IN.gain, cs3 = CM[IN.cmap], HC = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666"];
+    const pl = [{ type: "volume", x: X, y: Y, z: Z, value: V, isomin: -lim, isomax: lim, cmin: -lim, cmax: lim, colorscale: cs3, opacity: 0.25, surface: { count: 14 }, caps: { x: { show: false }, y: { show: false }, z: { show: false } },
+      opacityscale: [[0, 1], [0.3, 0.5], [0.45, 0], [0.55, 0], [0.7, 0.5], [1, 1]], showscale: false, hovertemplate: "inline %{y}, crossline %{x}<br>%{z:.0f}<extra>amplitude</extra>" }];
+    c.horizons.forEach((h, i) => pl.push({ type: "surface", x: c.xl, y: c.il, z: h.twt.map((r) => r.map((t) => (t == null ? null : -Yv(t)))), surfacecolor: h.twt.map((r) => r.map(() => 1)), colorscale: [[0, HC[i % HC.length]], [1, HC[i % HC.length]]], showscale: false, opacity: 0.55, name: h.name, hovertemplate: `${esc(h.name)}<br>inline %{y}, crossline %{x}<extra>interpreted horizon</extra>`, lighting: { ambient: 0.8, diffuse: 0.3 } }));
+    const t0 = -Yv(c.t_ms[0]), t1 = -Yv(c.t_ms.at(-1));
+    IN.wells.forEach((w) => pl.push({ type: "scatter3d", mode: "lines+text", x: [w.xl, w.xl], y: [w.il, w.il], z: [t0, t1], text: [w.name, ""], textposition: "top center", line: { color: WELLC, width: 9 }, textfont: { color: WELLC, size: 13 }, hovertemplate: `Well ${esc(w.name)}<extra></extra>`, showlegend: false }));
+    if (en) en[0].wells.filter((w) => w.gr).forEach((w) => pl.push({ type: "scatter3d", mode: "lines", x: w.gr.twt.map(() => w.xl), y: w.gr.twt.map(() => w.il), z: w.gr.twt.map((t) => -Yv(t)), line: { width: 14, color: w.gr.v, cmin: 0, cmax: 150, colorscale: [[0, "#f2d74e"], [0.5, "#8c9a4b"], [1, "#5b3a1a"]] }, customdata: w.gr.v, hovertemplate: `${esc(w.name)} gamma ray %{customdata:.0f} gAPI<extra></extra>`, showlegend: false }));
+    if (g.data?.[0]?.type === "volume") try { IN.blockCam = g._fullLayout.scene._scene.getCamera(); } catch {}  // only a block scene's camera is a block camera
+    const ax = (t) => ({ title: t, gridcolor: css("--rule"), color: css("--mut"), showbackground: false }), ticks = Array.from({ length: Math.floor(Yv(c.t_ms.at(-1)) / 1000) + 1 }, (_, i) => i * 1000);
+    await plot3(g, pl, { margin: { l: 0, r: 0, t: 0, b: 0 }, uirevision: "block" + sv.id, showlegend: false, scene: { aspectmode: "manual", aspectratio: { x: 1, y: Math.max(c.along_inline_axis_km / Math.max(c.along_crossline_axis_km, 0.1), 0.15), z: 0.6 }, camera: IN.blockCam || { eye: { x: 1.6, y: -1.6, z: 0.9 } },
+      xaxis: ax("Crossline"), yaxis: ax("Inline"), zaxis: { ...ax(Ylab()), tickvals: ticks.map((v) => -v), ticktext: ticks.map(String) } } });
+    $("#si-title").textContent = `${m.name}: full block (every ${c.stride.inline}th kept line, ${c.stride.time * m.dt_ms} ms)`;
+    $("#siinfo").innerHTML = `<table style="font-size:12px"><tr><td>Block<td>${ni} inlines × ${nj} crosslines × ${nk} samples (${V.length.toLocaleString()} values), thinned from the decimated copy. Quiet amplitudes are transparent; the gain sets which reflections stay opaque.${c.horizons.length ? "<tr><td>Horizons<td>" + c.horizons.map((h) => esc(h.name)).join(", ") + " (Smeaheia key horizons 2010)" : ""}<tr><td>Credit<td>${esc(c.credit)}</table>`;
+  }
+  function inspectClose() { if (IN.el) { IN.el.remove(); IN.ctl && IN.ctl.remove(); IN.stage && IN.stage.remove(); IN.el = IN.stage = null; } const b = $("#sv-inspect"); if (b) { b.textContent = "Inspect seismic ▸"; b.classList.add("on"); } REDRAW.scene?.(); }
+  function inspectOpen() { if (!SV.length) return; if (!st.sv.id) { const sel = $("#sv-id"); sel.value = SV[0].id; sel.dispatchEvent(new Event("change", { bubbles: true })); }
+    IN.sid = ""; IN.ctl = sec("L", "inspc", "Seismic inspector: view", `<div class="row"><b id="si-mode-lab"></b></div>
+      <div class="row"><label class="chk"><input type="radio" name="si-mode" value="inline" checked> inline section</label><label class="chk"><input type="radio" name="si-mode" value="crossline"> crossline section</label><label class="chk"><input type="radio" name="si-mode" value="time"> time slice</label></div>
+      <div class="row"><label class="chk" style="width:100%">inline <input type="range" id="si-il" style="flex:1"> <span id="si-ilv" class="mono"></span></label></div>
+      <div class="row"><label class="chk" style="width:100%">crossline <input type="range" id="si-xl" style="flex:1"> <span id="si-xlv" class="mono"></span></label></div>
+      <div class="row"><label class="chk" style="width:100%">time <input type="range" id="si-t" style="flex:1"> <span id="si-tv" class="mono"></span></label></div>
+      <div class="row"><label class="chk" style="width:100%" title="Colours saturate at the 99th-percentile amplitude divided by the gain: higher gain shows weaker reflections">gain <input type="range" id="si-g" min="0.5" max="8" step="0.1" value="1" style="flex:1"> <span id="si-gv"></span></label></div>
+      <div class="row"><label>Colours <select id="si-cm"><option value="seis">blue–white–red</option><option value="gray">grey</option></select></label><label class="chk" title="Make near-zero amplitudes transparent, in the inspector and in the big scene"><input type="checkbox" id="si-clear"> see-through quiet zones</label></div>
+      <div class="row"><label class="chk"><input type="checkbox" id="si-d"> depth (illustrative)</label></div>
+      <div class="row"><label title="Full block only: values sent to the browser; more is smoother and needs a stronger graphics card">Block detail <select id="si-det"><option value="350000">normal (350 k)</option><option value="900000">high (900 k)</option><option value="1800000">very high (1.8 M)</option></select></label></div>
+      <div class="row"><label class="chk" title="Overlay what else we know: interpreted horizons (Smeaheia), gamma-ray logs and formation tops of the wells in this survey"><input type="checkbox" id="si-en"> enrich: horizons, gamma ray, formation tops</label></div>`, true);
+    IN.el = sec("R", "insp", "Seismic inspector: survey", `<div id="siinfo"></div>`, true);
+    IN.stage = document.createElement("div"); IN.stage.className = "istage"; IN.stage.innerHTML = `<div class="ibar"><b id="si-title"></b>
+      <span class="tip">view</span>${[["only2d", "2D section"], ["only3d", "3D cube"], ["block", "full block"]].map(([k, t]) => `<button class="lnk lay ${IN.lay === k ? "on" : ""}" data-lay="${k}">${t}</button>`).join("")}<span style="flex:1"></span><button class="btn" id="si-close" title="Close the inspector and return to the 3D scene">✕ 3D scene</button></div>
+      <div id="sihov" class="tip ihov">hover the section for values</div>
+      <div class="igrid ${IN.lay}"><div id="si2d"></div><div id="si3d"></div></div>`;
+    $(".plotwrap").appendChild(IN.stage);
+    $("#si-close").onclick = () => inspectClose();
+    IN.stage.querySelector(".ibar").addEventListener("click", (e) => { const k = e.target.dataset.lay; if (!k) return; IN.lay = k; $(".igrid", IN.stage).className = "igrid " + k; IN.stage.querySelectorAll(".lay").forEach((b) => b.classList.toggle("on", b.dataset.lay === k)); try { const g = $("#si3d"); if (g.data?.[0]?.type === "surface") IN.cam = g._fullLayout.scene._scene.getCamera(); if (g.data?.[0]?.type === "volume") IN.blockCam = g._fullLayout.scene._scene.getCamera(); Plotly.purge(g); } catch {} inspectLater(); });
+    const b = $("#sv-inspect"); b.textContent = "Close inspector ◂"; b.classList.remove("on");
+    const body = $(".secb", IN.ctl), sync = () => { const sv = st.sv, L = LN[sv.id]; if (!L) return; sv.axis = IN.mode === "crossline" ? "crossline" : "inline"; const arr = L[sv.axis], v = sv.axis === "inline" ? IN.il : IN.xl; sv.pos = arr.length > 1 ? nearIdx(arr, v) / (arr.length - 1) : 0.5; sv.ck = ""; $$("[name='sv-ax']").forEach((r) => (r.checked = r.value === sv.axis)); later(); };
+    body.oninput = (e) => { const t = e.target, L = LN[st.sv.id]; if (!L) return; if (t.id === "si-il") IN.il = L.inline[+t.value]; else if (t.id === "si-xl") IN.xl = L.crossline[+t.value]; else if (t.id === "si-t") IN.t = +t.value; else if (t.id === "si-g") IN.gain = +t.value; else return; if (t.id === "si-il" || t.id === "si-xl") sync(); inspectLater(); };
+    body.onchange = (e) => { const t = e.target; if (t.name === "si-mode") { IN.mode = t.value; if (t.value !== "time") sync(); inspectLater(); } else if (t.id === "si-cm") { IN.cmap = t.value; inspectLater(); } else if (t.id === "si-d") { IN.depth = t.checked; inspectLater(); } else if (t.id === "si-clear") { IN.clear = t.checked; inspectLater(); later(); } else if (t.id === "si-en") { IN.enrich = t.checked; inspectLater(); } else if (t.id === "si-det") { IN.detail = +t.value; inspectLater(); } };
+    new ResizeObserver(() => { try { Plotly.Plots.resize($("#si2d")); } catch {} inspectLater(); }).observe(IN.stage);
+    inspectLater(); }
+  if ($("#sv-inspect")) { $("#sv-inspect").onclick = () => (IN.el ? inspectClose() : inspectOpen()); ["#sv-id", "#sv-base"].forEach((id) => $(id).addEventListener("change", () => IN.el && inspectLater())); $("#sv-v").addEventListener("input", () => IN.el && IN.depth && inspectLater()); }
+  return { IN, OPQ, inspectOpen, inspectClose, inspectLater };
+}
 const PAGES = {
   async start() {
     const d = META.data, fs = (await api("formations")).filter((f) => f.units >= 20).slice(0, 14), w = W();
@@ -193,7 +357,7 @@ const PAGES = {
     <div class="grid g4"><div><div class="num">${d.labelled.toLocaleString()}</div><div class="cap">units used (${w.unit})</div></div><div><div class="num">${d.wellbores_labelled.toLocaleString()}</div><div class="cap">wells</div></div><div><div class="num">${d.rows.toLocaleString()}</div><div class="cap">${esc(w.rows)}</div></div><div><div class="num">${pct(d.base_rate)}</div><div class="cap">${esc(w.hit)}</div></div></div>
     <h2>How to read the numbers</h2><p>The <b>rate</b> is the share of ${esc(w.rows)} that ${esc(w.hit)}. It is what the records say, not a direct measurement of the ground. Evidence <b>layers</b> each add or subtract from the starting rate: the formation or group, nearby wells, well logs, later seismic. Hover a layer's status for the test behind it.</p>
     ${note("Status of the evidence", `<p>${LAYERS.map((l) => `${esc(l.title)}: ${tag(l.status, STATUS_WORDS[l.status], evTip(l))}`).join(" · ")}</p>`, "Skill is small. Use estimates as leads to check, not as facts. See <a href='#validation'>Validation</a> for the full test.")}
-    <h2>Where to go</h2><table><tr><td><a href="#scene">3D</a><td>wells, estimate sheets, unusual areas and seismic in depth; <b>Top view</b> gives the map-like view<tr><td><a href="#units">Units</a><td>every row, with the evidence behind each estimate<tr><td><a href="#data">Data</a><td>what we hold, where it comes from, and every database table<tr><td><a href="#targets">Targets</a><td>build a new question from any table (e.g. discovery, DST flow, mud weight)<tr><td><a href="#layers">Layers</a>, <a href="#knowledge">Knowledge</a>, <a href="#validation">Validation</a><td>why the estimates can be trusted, or not</table>
+    <h2>Where to go</h2><table><tr><td><a href="#earth">Subsurface model</a><td>the 3D model of the shelf: strata, target probabilities with their evidence, wells at vertical depth, what each well found, seismic, map layers; <b>Saved targets</b> shows the Target builder's sheets and sticks<tr><td><a href="#units">Units</a><td>every row, with the evidence behind each estimate<tr><td><a href="#data">Data</a><td>what we hold, where it comes from, and every database table<tr><td><a href="#targets">Targets</a><td>build a new question from any table (e.g. discovery, DST flow, mud weight)<tr><td><a href="#layers">Layers</a>, <a href="#knowledge">Knowledge</a>, <a href="#validation">Validation</a><td>why the estimates can be trusted, or not</table>
     <h2>Terms</h2><table><tr><td><b>Formation</b><td>A named layer of rock that geologists can recognise across a region, defined by its rock type and its place in the stack. Example: the Sele Formation is a dark, layered shale found over much of the North Sea. The same formation is met at different depths in different wells (deeper in basins, shallower on highs).
     <tr><td><b>Group</b><td>A set of related formations. The Hordaland Group contains many formations. Where a report only names the group, the group is used.
     <tr><td><b>Formation top</b><td>The depth where a well first enters a formation; the bottom is where it leaves it. Names and depths come from the Sodir register.
@@ -208,66 +372,202 @@ const PAGES = {
 
   // ---- the NCS earth model of the pilot (PLAN P7.2): group tops as surfaces (a unit's thickness is the gap to the next top), target cells
   // coloured by probability and faded by support, wells on their paths. Click a cell for the evidence chain behind its number.
-  async earth(_, live) {
-    const M = await api("earth/meta"); if (!live()) return;
-    const groups = M.horizons.filter((h) => h.level === "GROUP" || h.level === "SEABED").map((h) => h.name);
-    const st = { colour: "p", t: "hydrocarbons", pmin: 0.5, smin: 0.0, fade: true, show: new Set(["SEABED", "SHETLAND GP", "VIKING GP", "BRENT GP", "DUNLIN GP"].filter((g) => groups.includes(g))), wells: true, ex: 8, seq: 0, cam: null };
-    const desk = stage2('<div class="fill" id="pe"></div>', () => ({ view: "earth model (pilot)", target: st.t, probability_at_least: st.pmin }));
-    const tgt = (id) => M.targets.find((t) => t.id === id);
-    sec("L", "e-t", "Target", `<div class="row"><label>Target <select id="e-t">${M.targets.map((t) => `<option value="${t.id}">${esc(t.title)}</option>`).join("")}</select></label></div>
-      <div class="row"><label class="chk" style="width:100%">probability at least <input type="range" id="e-p" min="0.05" max="0.95" step="0.05" value="0.5" style="flex:1"> <span id="e-pv" class="mono">0.50</span></label></div>
-      <div class="row"><label class="chk" style="width:100%">support at least <input type="range" id="e-s" min="0" max="0.9" step="0.05" value="0" style="flex:1"> <span id="e-sv" class="mono">0.00</span></label></div>
-      <div class="row"><label class="chk"><input type="checkbox" id="e-f" checked> fade cells with little support</label></div>
-      <div class="row"><label>Colour cells by <select id="e-c"><option value="p">target probability</option><option value="gr">gamma ray between wells (gAPI)</option></select></label></div><p id="e-n" class="tip"></p>`, true);
-    sec("L", "e-s", "Strata and wells", `<p class="tip" style="margin:2px 0">Group tops (a group fills the space down to the next top) · <button class="lnk" id="e-none" type="button">none</button> · <button class="lnk" id="e-all" type="button">all</button></p>
-      <div id="e-g">${groups.map((g) => `<label class="chk" style="display:flex"><input type="checkbox" data-g="${esc(g)}" ${st.show.has(g) ? "checked" : ""}> ${esc(g)}</label>`).join("")}</div>
-      <div class="row"><label class="chk"><input type="checkbox" id="e-w" checked> wells</label></div>
-      <div class="row"><label class="chk">depth stretch <input type="range" id="e-x" min="1" max="30" value="8"> <span id="e-xv">8×</span></label></div>`, true);
+  async earth(region, live) {
+    const RG = await api("earth/regions"); region = region || "pilot";
+    const built = RG.filter((r) => r.built), ALL = region === "all" && built.length > 1, REG = ALL ? built.map((r) => r.id) : [region === "all" ? "pilot" : region];
+    const [MS, SV] = await Promise.all([Promise.all(REG.map((r) => api("earth/meta", { region: r }))), api("seismic/surveys").catch(() => [])]); if (!live()) return;
+    const LN = {};  // seismic line lists per survey (shared with the inspector)
+    const M = MS[0];  // targets and rules; every region has the same targets, its own numbers (the skill table and the info list them per region)
+    const groups = [...new Set(MS.flatMap((m) => m.horizons.filter((h) => h.level === "GROUP" || h.level === "SEABED").map((h) => h.name)))];
+    const fms = [...new Set(MS.flatMap((m) => m.horizons.filter((h) => h.level !== "GROUP" && h.level !== "SEABED").map((h) => h.name)))];
+    const LAYN = [...groups, ...fms], gcol = (g) => (g === "SEABED" ? "#8fb8d8" : LAYC[Math.max(0, LAYN.indexOf(g)) % LAYC.length]);  // one colour per top, the same in the list and the scene
+    const ML = [["coast", "coast", css("--mut"), "line"], ["grid", "latitude and longitude", css("--rule"), "line"], ["faults", "mapped faults (Sodir)", "#b5442c", "line"],
+      ["elements", "structural elements (Sodir)", "#5b7fa6", "line"], ["names", "structural element names", "#5b7fa6", "text"], ["surveys", "seismic survey outlines", "#c99a06", "line"]];
+    // settings survive a change of region or target (owner: changing the region reset everything); remembered per browser
+    const SAVE = "earth:settings", sv = (() => { try { return JSON.parse(localStorage.getItem(SAVE) || "{}"); } catch { return {}; } })(), PRE = M.presets || {};
+    const sugg = (t) => ["SEABED", ...(PRE[t]?.top_groups || [])].filter((g) => groups.includes(g));  // the groups where the target is most likely
+    const autoP = (t) => Math.max(0.05, Math.min(0.95, Math.round((PRE[t]?.q90 ?? 0.5) * 20) / 20));  // top 10 percent of cells, not a fixed 0.5
+    const st = { colour: "p", t: "hydrocarbons", pmin: 0.5, pauto: true, smin: 0.0, fade: true, wells: true, obs: true, tied: false, ex: ALL ? 30 : 8, seq: 0, cam: null, ...sv, map: new Set(sv.map || ["coast", "grid", "faults", "elements"]),
+      sv: { id: "", axis: "inline", pos: 0.5, v: 2.0, gain: 1, base: "", ck: "" } };
+    if (!M.targets.some((t) => t.id === st.t)) st.t = "hydrocarbons";
+    st.show = new Set((sv.show || sugg(st.t)).filter((g) => LAYN.includes(g))); if (!st.show.size) st.show = new Set(sugg(st.t));
+    if (st.pauto) st.pmin = autoP(st.t);
+    const keep = () => { try { localStorage.setItem(SAVE, JSON.stringify({ colour: st.colour, t: st.t, pmin: st.pmin, pauto: st.pauto, smin: st.smin, fade: st.fade, wells: st.wells, obs: st.obs, tied: st.tied, ex: st.ex, map: [...st.map], show: [...st.show] })); } catch {} };
+    const desk = stage2('<div class="fill" id="pe"></div>', () => ({ view: "earth", target: st.t, definition: tgt(st.t)?.title || "", region: st.cellRegion || REG[0], earth_region: st.cellRegion || REG[0],
+      earth_target: st.t, cell: st.cell ?? null, probability_at_least: st.pmin, formations: [...st.show].slice(0, 30), depth_reference: "sea" }));
+    const tgt = (id, m = M) => m.targets.find((t) => t.id === id);
+    const PRESET = [["oil", "Oil and gas prospects", "hydrocarbons"], ["res", "Reservoir quality", "reservoir"], ["co2", "CO2 storage", "co2_storage"], ["op", "Drilling hazard", "overpressure"]];
+    const COLS = [["Target", [["p", "probability of the target"]]], ["Properties between wells", [["po", "porosity (%)"], ["gr", "gamma ray (gAPI)"]]], ["CO2 storage", [["cc", "capacity (kt per cell)"], ["lw", "old wells through the unit (leak paths)"]]]];
+    const CDESC = { p: "Colour = the target's probability (published form: model, unit rate or base rate); faint dots have little data behind them.", po: "Colour = estimated porosity, the compaction trend plus the unit's offset and nearby wells.",
+      gr: "Colour = estimated gamma ray per unit: low is sand-like, high is shale-like. Only regions with FORCE log wells.", cc: "Colour = expected CO2 capacity of the cell at the median storage efficiency.", lw: "Colour = old wellbores within 2 km drilled through the unit: possible CO2 leak paths." };
+    sec("L", "e-r", "Region and presets", `<div class="row"><label>Region <select id="e-r">${RG.map((r) => `<option value="${r.id}" ${!ALL && r.id === REG[0] ? "selected" : ""} ${r.built ? "" : "disabled"}>${esc(r.title)}${r.built ? "" : " (not built)"}</option>`).join("")}
+      ${built.length > 1 ? `<option value="all" ${ALL ? "selected" : ""}>All regions side by side (${built.length})</option>` : ""}</select></label></div>
+      <p class="tip" style="margin:2px 0">Presets: a target, its likely strata and a threshold that shows its top 10 percent of cells.</p>
+      <div class="row presets">${PRESET.map(([k, t]) => `<button class="btn" type="button" data-pre="${k}">${esc(t)}</button>`).join("")}</div>
+      <p class="tip">Settings stay when you change region. Each region is fitted and tested on its own wells; "side by side" does not pool them.</p>`, true);
+    sec("L", "e-t", "What is shown", `<div class="row"><label>Target <select id="e-t">${M.targets.map((t) => `<option value="${t.id}" ${t.id === st.t ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select></label></div>
+      <p class="tip" id="e-td" style="margin:2px 0"></p>
+      <div class="row"><label>Colour cells by <select id="e-c">${COLS.map(([g, os]) => `<optgroup label="${esc(g)}">${os.map(([v, t]) => `<option value="${v}" ${v === st.colour ? "selected" : ""}>${esc(t)}</option>`).join("")}</optgroup>`).join("")}</select></label></div>
+      <p class="tip" id="e-cd" style="margin:2px 0"></p>`, true);
+    sec("L", "e-fl", "Which cells", `<div class="row"><label class="chk" style="width:100%">probability at least <input type="range" id="e-p" min="0.05" max="0.95" step="0.05" value="${st.pmin}" style="flex:1"> <span id="e-pv" class="mono">${st.pmin.toFixed(2)}</span></label></div>
+      <div class="row"><label class="chk"><input type="checkbox" id="e-pa" ${st.pauto ? "checked" : ""}> automatic: the target's top 10 percent of cells</label></div>
+      <div class="row"><label class="chk" style="width:100%">support at least <input type="range" id="e-s" min="0" max="0.9" step="0.05" value="${st.smin}" style="flex:1"> <span id="e-sv" class="mono">${st.smin.toFixed(2)}</span></label></div>
+      <div class="row"><label class="chk"><input type="checkbox" id="e-f" ${st.fade ? "checked" : ""}> fade cells with little support</label></div><p id="e-n" class="tip"></p>`, true);
+    sec("L", "e-s", "Strata (group tops)", `<p class="tip" style="margin:2px 0">A group fills the space down to the next top. Point at a name to pick out its sheet · <button class="lnk" id="e-sug" type="button">suggested</button> · <button class="lnk" id="e-none" type="button">none</button> · <button class="lnk" id="e-all" type="button">all</button></p>
+      <div id="e-g">${groups.map((g) => `<label class="chk lay" data-hl="${esc(g)}"><input type="checkbox" data-g="${esc(g)}" ${st.show.has(g) ? "checked" : ""}>${swatch(gcol(g))} ${esc(g)}</label>`).join("")}
+      ${fms.length ? `<details style="margin-top:4px"><summary class="tip">Formation tops (${fms.length})</summary>${fms.map((g) => `<label class="chk lay" data-hl="${esc(g)}"><input type="checkbox" data-g="${esc(g)}" ${st.show.has(g) ? "checked" : ""}>${swatch(gcol(g))} ${esc(g)}</label>`).join("")}</details>` : ""}</div>`, true);
+    sec("L", "e-m", "Wells and map", `<div class="row"><label class="chk lay" data-hl="wells"><input type="checkbox" id="e-w" ${st.wells ? "checked" : ""}>${swatch("#e0218a", "line")} wells (vertical depth; sidetracks without one estimated)</label></div>
+      <div class="row"><label class="chk lay" data-hl="observed"><input type="checkbox" id="e-o" ${st.obs ? "checked" : ""}>${swatch("linear-gradient(90deg,#440154,#21918c,#fde725)", "line")} observed in wells: what each well found, unit by unit</label></div>
+      <p class="tip" style="margin:2px 0">Map layers, drawn at sea level. Point at a name to pick it out.</p><div id="e-ml">${ML.map(([k, t, c, kind]) => `<label class="chk lay" data-hl="map:${k}"><input type="checkbox" data-m="${k}" ${st.map.has(k) ? "checked" : ""}>${swatch(c, kind)} ${esc(t)}</label>`).join("")}</div>`, false);
+    sec("L", "seis", "Seismic", SV.length ? `<p class="tip" style="margin:0 0 6px">A vertical section along one survey line, placed where it is. Depth = two-way time / 2 x velocity from sea level: a preview, not a calibrated tie (tied horizons are).</p>
+      <div class="row"><label>Survey <select id="sv-id"><option value="">none</option>${SV.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></label></div>
+      <div class="row"><label class="chk"><input type="radio" name="sv-ax" value="inline" checked> inline</label><label class="chk"><input type="radio" name="sv-ax" value="crossline"> crossline</label><span id="sv-lab" class="tip"></span></div>
+      <div class="row"><input type="range" id="sv-pos" min="0" max="1" step="0.005" value="0.5" style="width:100%"></div>
+      <div class="row"><label class="chk">velocity <input type="range" id="sv-v" min="1.6" max="2.8" step="0.05" value="2.0"> <span id="sv-vv">2.0 km/s</span></label></div>
+      <div class="row"><label class="chk">gain <input type="range" id="sv-g" min="0.5" max="6" step="0.1" value="1"></label></div>
+      <div class="row"><label>Difference against <select id="sv-base"><option value="">none (amplitude)</option></select></label><span class="tip">same processing only</span></div>
+      <div class="row"><label class="chk" title="Smeaheia key horizons converted to depth with the well tie (L058), only where they beat the wells on held-out picks"><input type="checkbox" id="sv-tied" ${st.tied ? "checked" : ""}> tied seismic horizons (depth)</label> <button class="btn" id="sv-fly" type="button">Fly to survey</button></div>
+      <div class="row"><button class="btn on" id="sv-inspect" title="Open a side pane with a 2D section or time slice and a 3D cube of this survey">Inspect seismic ▸</button></div>
+      <p class="tip" style="margin:4px 0">${[...new Set(SV.map((x) => x.credit))].map(esc).join("<br>")}</p>` : '<p class="tip">No seismic indexed.</p>', false);
+    sec("L", "e-v", "Display", `<div class="row"><label class="chk">depth stretch <input type="range" id="e-x" min="1" max="60" value="${st.ex}"> <span id="e-xv">${st.ex}×</span></label></div>
+      <div class="row"><button class="btn" id="e-top" type="button" title="look straight down, like a map">Top view</button> <button class="btn" id="e-reset" type="button">Reset view</button></div>
+      <p class="tip">Export for Petrel or RMS (surfaces as IRAP and ZMAP+, a zone grid as GRDECL with the probabilities): ${REG.map((r) => `<a href="api/earth/export?region=${r}" download>${esc(r.replace(/_/g, " "))}</a>`).join(" · ")}</p>`, false);
     sec("R", "e-info", "What you are looking at", '<div id="e-ib"></div>', true);
+    { const T7 = ["hydrocarbons", "oil", "gas", "reservoir", "overpressure", "green_clay", "calcareous_clay", "sandy_delta"];
+      sec("R", "e-skill", "Skill by region (held-out wells)", `<p class="tip">Deviance gain over each region's base rate on held-out 40 km blocks of its own wells (0 = no better than the base rate). After the slash: the same model trained on wells completed before 2005 and scored on later wells (forward in time). In brackets: what is published (model, unit prior or base rate).</p>
+        <table style="font-size:12px"><tr><th>target${built.map((r) => `<th class=r>${esc(r.id.replace(/_/g, " "))}`).join("")}</tr>${T7.map((t) => `<tr><td>${t.replace(/_/g, " ")}${built.map((r) => { const k = r.skill[t]; return `<td class=r>${k ? `${k.gain_model_vs_base} / ${k.forward_in_time ?? "–"} <span class="tip">(${esc(k.published || "")})</span>` : "–"}`; }).join("")}</tr>`).join("")}</table>
+        <p class="tip">Not built yet: ${RG.filter((r) => !r.built).map((r) => esc(r.title)).join(", ") || "none"}.</p>`, false); }
     sec("R", "e-cell", "Selected cell: the evidence", '<div id="e-cb"><p class="tip">Click a cell (a dot) to see where its number comes from.</p></div>', true);
     const C = new Map(), get = (k, f) => (C.has(k) ? Promise.resolve(C.get(k)) : f().then((v) => (C.set(k, v), v)));
-    const info = () => { const t = tgt(st.t); const g = t.gain_model_vs_base; $("#e-ib").innerHTML = `<p><b>${esc(t.title)}</b>. Each dot is one unit (formation, else group) in one 2 km column; colour = probability, faint = little data behind it (support). Depth is metres below sea level.</p>
-      ${t.id === "co2_storage" ? `<p>${esc(t.composite?.terms || "")}. Not calibrated: ${esc(t.why || "")}. Checks at known sites: ${Object.entries(t.checks || {}).map(([k, v]) => `${esc(k)}: ${Object.entries(v).filter(([kk]) => kk.endsWith("FM")).map(([kk, vv]) => `${esc(kk)} ${vv}`).join(", ")}`).join("; ")} (pilot median ${Object.values(t.checks || {})[0]?.pilot_median}).</p>`
-        : `<p>Held-out wells (blocked 40 km): gain over the base rate <b>${g}</b> (unit prior alone ${t.gain_unit_prior_vs_base}); published: <b>${esc(t.published || "")}</b>; ${t.rows} observations in ${t.wells} wells; base rate ${pct(t.base_rate)}.</p>`}
+    const info = () => { const t = tgt(st.t); const g = t.gain_model_vs_base; $("#e-ib").innerHTML = `<p><b>${esc(t.title)}</b>. Each dot is one unit (formation, else group) in one ${REG.map((r, i) => MS[i].pilot.step_km).join("/")} km column; colour = probability, faint = little data behind it (support). Depth is metres below sea level.</p>
+      ${ALL ? `<p>${REG.map((r, i) => { const x = tgt(st.t, MS[i]); return x ? `${esc(MS[i].pilot.title)}: ${x.id === "co2_storage" ? "composite, not calibrated" : `gain <b>${x.gain_model_vs_base}</b> (${esc(x.published || "")})`}` : ""; }).join("<br>")}</p>`
+      : t.id === "co2_storage" ? `<p>${esc(t.composite?.terms || "")}. Not calibrated: ${esc(t.why || "")}. Checks at known sites: ${Object.entries(t.checks || {}).map(([k, v]) => `${esc(k)}: ${Object.entries(v).filter(([kk]) => kk.endsWith("FM")).map(([kk, vv]) => `${esc(kk)} ${vv}`).join(", ")}`).join("; ")} (region median ${Object.values(t.checks || {})[0]?.pilot_median}).</p>`
+        : `<p>Held-out wells (blocked 40 km): gain over the base rate <b>${g}</b> (unit prior alone ${t.gain_unit_prior_vs_base}); published: <b>${esc(t.published || "")}</b>; ${t.rows} observations in ${t.wells} wells; base rate ${pct(t.base_rate)}.</p>
+          ${t.time_test?.gain_selected_features != null ? `<p class="tip">Forward in time (trained on wells completed before ${t.time_test.year}, scored on ${t.time_test.test_wells} later wells): gain ${t.time_test.gain_selected_features} (unit prior ${t.time_test.gain_unit_prior}).</p>` : ""}
+          ${t.features ? `<p class="tip">Model inputs: ${esc(t.features.map((f) => FEATN[f] || f).join(", "))}. Model family: ${esc(t.family || "logistic")}${t.families ? ` (held-out / forward: ${Object.entries(t.families).map(([k, v]) => `${k} ${v.held_out} / ${v.forward_in_time ?? "–"}`).join("; ")})` : ""}.</p>` : ""}
+          ${t.gain_nested != null ? `<p class="tip">With the inputs chosen inside each training fold (nested): gain ${t.gain_nested}, against ${t.gain_selected_on_same_folds} when chosen on the scored folds.${t.model_rejected ? ` Model not published: ${esc(t.model_rejected)}.` : ""}</p>` : ""}`}
+      ${!ALL && t.id === "co2_storage" && M.co2_capacity ? capTable(M.co2_capacity) : ""}
+      ${!ALL && t.id === "chance_of_success" && t.test ? `<p class="tip">Held-out check against wells with hydrocarbons (${t.test.rows} unit observations, calibrated on other blocks): chance of success ${t.test.gain_cos}; elements alone: ${(t.composite?.elements || []).map((e) => `${e} ${t.test["gain_" + e]}`).join(", ")}. Limiting element across cells: ${Object.entries(t.limiting_share || {}).map(([k, v]) => `${k} ${pct(v)}`).join(", ")}. Charge at ${esc(t.composite?.charge_at || "")}.</p>` : ""}
+      ${M.conditional_on ? `<p class="tip"><b>Read as:</b> ${esc(M.conditional_on)}.</p>` : ""}
       <p class="tip">Surfaces: tops chosen per horizon by held-out tests (kriging, deep-kernel GP, isochores, tied seismic). <a href="#log">Log</a> L056–L070.</p>`; };
+    const mapTraces = async (box) => {  // map layers in the scene's frame (EPSG:3035 km) at depth 0, clipped to the box
+      const out = [], [x0, x1, y0, y1] = box, inb = (x, y) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+      const line = (xs, ys, k, c, w, dash) => out.push({ type: "scatter3d", mode: "lines", x: xs, y: ys, z: xs.map((v) => (v == null ? null : 0)), line: { color: c, width: w, ...(dash ? { dash } : {}) }, name: ML.find((m) => m[0] === k)[1], meta: { hl: "map:" + k }, hoverinfo: "skip", showlegend: false });
+      const proj = (pts) => { const xs = [], ys = []; let open = false; pts.forEach(([lo, la]) => { const [x, y] = L3035(lo, la); if (inb(x, y)) { xs.push(x); ys.push(y); open = true; } else if (open) { xs.push(null); ys.push(null); open = false; } }); xs.push(null); ys.push(null); return [xs, ys]; };
+      if (st.map.has("coast")) { const xs = [], ys = []; (await coast()).forEach((ln) => { const [a, b] = proj(ln); xs.push(...a); ys.push(...b); }); line(xs, ys, "coast", css("--mut"), 3); }
+      if (st.map.has("grid")) { const xs = [], ys = [];
+        for (let la = 54; la <= 76; la += ALL ? 2 : 1) { const [a, b] = proj(Array.from({ length: 81 }, (_, i) => [-10 + i * 0.6, la])); xs.push(...a); ys.push(...b); }
+        for (let lo = -10; lo <= 40; lo += ALL ? 5 : 2) { const [a, b] = proj(Array.from({ length: 61 }, (_, i) => [lo, 54 + i * 0.4])); xs.push(...a); ys.push(...b); }
+        line(xs, ys, "grid", css("--rule"), 1); }
+      const MP = await Promise.all(REG.map((r) => get("map|" + r, () => api("earth/map", { region: r }).catch(() => null))));
+      MP.filter(Boolean).forEach((m) => {
+        if (st.map.has("faults")) line(m.faults.x, m.faults.y, "faults", "#b5442c", 2.5);
+        if (st.map.has("elements")) line(m.elements.x, m.elements.y, "elements", "#5b7fa6", 1.5, "dash");
+        if (st.map.has("names")) { const n = m.element_names.filter((e) => inb(e.x, e.y)); out.push({ type: "scatter3d", mode: "text", x: n.map((e) => e.x), y: n.map((e) => e.y), z: n.map(() => 0), text: n.map((e) => e.name), textfont: { size: 10, color: "#5b7fa6" }, meta: { hl: "map:names" }, name: "structural element names", hovertext: n.map((e) => `${e.name}: ${e.kind}`), hoverinfo: "text", showlegend: false }); } });
+      if (st.map.has("surveys")) { const SV = await get("surveys", () => api("seismic/surveys").catch(() => [])); const xs = [], ys = []; SV.forEach((s) => { if (!s.footprint?.length) return; const [a, b] = proj([...s.footprint, s.footprint[0]].map(([la, lo]) => [lo, la])); xs.push(...a); ys.push(...b); }); line(xs, ys, "surveys", "#c99a06", 3); }
+      return out; };
     const draw = async () => {
-      const my = ++st.seq, g = $("#pe"); $("#e-pv").textContent = st.pmin.toFixed(2); $("#e-sv").textContent = st.smin.toFixed(2); $("#e-xv").textContent = st.ex + "×"; info();
-      const [S, T, Wl] = await Promise.all([get("s", () => api("earth/surfaces", { step: 2 })), get(["t", st.t, st.pmin, st.smin].join("|"), () => api("earth/target", { t: st.t, pmin: st.pmin, smin: st.smin })), get("w", () => api("earth/wells"))]);
+      const my = ++st.seq, g = $("#pe"); $("#e-pv").textContent = st.pmin.toFixed(2); $("#e-sv").textContent = st.smin.toFixed(2); $("#e-xv").textContent = st.ex + "×"; info(); keep();
+      { const t = tgt(st.t); $("#e-td").textContent = t ? (t.base_rate != null ? `Base rate ${pct(t.base_rate)} of unit observations; published as ${t.published}.` : "A composite of other targets, not calibrated.") + (st.pauto ? ` Threshold: the top 10 percent of cells (${st.pmin.toFixed(2)}).` : "") : ""; $("#e-cd").textContent = CDESC[st.colour] || ""; }
+      const lim = ALL ? Math.round(30000 / REG.length) : 30000;
+      const D = await Promise.all(REG.map((r) => Promise.all([get("s|" + r, () => api("earth/surfaces", { step: ALL ? 3 : 2, region: r })), get(["t", r, st.t, st.pmin, st.smin].join("|"), () => api("earth/target", { t: st.t, pmin: st.pmin, smin: st.smin, limit: lim, region: r })), get("w|" + r, () => api("earth/wells", { region: r }))])));
       if (my !== st.seq || !g) return;
-      $("#e-n").textContent = `${T.n.toLocaleString()} cells at or above ${st.pmin.toFixed(2)}${T.shown < T.n ? `; the ${T.shown.toLocaleString()} most likely and best supported shown` : ""}.`;
-      const tr = [], GC = ["#9ecae1", "#a1d99b", "#fdd0a2", "#bcbddc", "#fcbba1", "#c7e9c0", "#fdae6b", "#dadaeb", "#d9d9d9", "#c6dbef", "#e5f5e0", "#fee6ce"];
-      S.surfaces.filter((h) => st.show.has(h.name)).forEach((h, i) => tr.push({ type: "surface", x: S.x, y: S.y, z: h.z.map((r) => r.map((v) => (v == null ? null : -v))), customdata: h.sd.map((r, a) => r.map((v, b) => [v, h.near_km[a][b]])), surfacecolor: h.z.map((r) => r.map(() => i)), cmin: 0, cmax: GC.length - 1,
-        colorscale: GC.map((c, k) => [k / (GC.length - 1), c]), showscale: false, opacity: 0.45, name: h.name, hovertemplate: `top ${esc(h.name)}: %{z:.0f} m<br>± %{customdata[0]:.0f} m (1 sd); nearest pick %{customdata[1]:.1f} km<extra></extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } }));
+      const nT = D.reduce((n, d) => n + d[1].n, 0), nS = D.reduce((n, d) => n + d[1].shown, 0);
+      $("#e-n").textContent = `${nT.toLocaleString()} cells at or above ${st.pmin.toFixed(2)}${nS < nT ? `; the ${nS.toLocaleString()} most likely and best supported shown` : ""}.`;
+      const tr = [];
+      D.forEach(([S], ri) => S.surfaces.filter((h) => st.show.has(h.name)).forEach((h) => { const c = gcol(h.name); tr.push({ type: "surface", x: S.x, y: S.y, z: h.z.map((r) => r.map((v) => (v == null ? null : -v))), customdata: h.sd.map((r, a) => r.map((v, b) => [v, h.near_km[a][b]])), surfacecolor: h.z.map((r) => r.map(() => 0)), cmin: 0, cmax: 1,
+        colorscale: [[0, c], [1, c]], showscale: false, opacity: 0.45, name: h.name, meta: { hl: h.name }, showlegend: false, hovertemplate: `top ${esc(h.name)}${ALL ? ` (${esc(REG[ri])})` : ""}: %{z:.0f} m<br>± %{customdata[0]:.0f} m (1 sd); nearest pick %{customdata[1]:.1f} km<extra></extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } }); }));
       const bins = st.fade ? [[0.6, 1.01, 0.95, "well supported"], [0.3, 0.6, 0.5, "some support"], [-1, 0.3, 0.15, "little support"]] : [[-1, 1.01, 0.85, "cells"]];
-      if (st.colour === "gr") { const G = await get("gr", () => api("earth/property", { name: "gamma_ray" })); if (my !== st.seq) return; const t = G.test;
-        $("#e-n").textContent = `Gamma ray in ${G.shown.toLocaleString()} of ${G.n.toLocaleString()} cells (evenly thinned). Held-out wells: error ${t.rmse_model_gAPI} gAPI vs unit mean ${t.rmse_unit_mean_gAPI} and pilot mean ${t.rmse_pilot_mean_gAPI} (${t.wells} FORCE wells). One value per unit and column; within a unit the log varies by about ${t.within_unit_sd_median_gAPI} gAPI.`;
-        tr.push({ type: "scatter3d", mode: "markers", name: "gamma ray (estimated)", x: G.x, y: G.y, z: G.top.map((v, i) => -(v + G.base[i]) / 2), customdata: G.unit.map((u, i) => [G.cell[i], u, G.sd[i]]),
-          marker: { size: 3.2, opacity: 0.8, color: G.value, cmin: 20, cmax: 150, colorscale: [[0, "#f2d74e"], [0.5, "#8c9a4b"], [1, "#5b3a1a"]], showscale: true, colorbar: { title: { text: "GR (gAPI)" }, thickness: 10, len: 0.5 } },
-          hovertemplate: "%{customdata[1]}<br>gamma ray %{marker.color:.0f} ± %{customdata[2]:.0f} gAPI (estimated between wells)<extra>low = sand-like, high = shale-like</extra>" }); }
-      else bins.forEach(([lo, hi, op, nm]) => { const k = T.support.map((s, i) => (s >= lo && s < hi ? i : -1)).filter((i) => i >= 0); if (!k.length) return;
-        tr.push({ type: "scatter3d", mode: "markers", name: nm, x: k.map((i) => T.x[i]), y: k.map((i) => T.y[i]), z: k.map((i) => -(T.top[i] + T.base[i]) / 2), customdata: k.map((i) => [T.cell[i], T.unit[i], T.p05[i], T.p95[i], T.support[i], T.top[i], T.base[i]]),
-          marker: { size: 3.5, opacity: op, color: k.map((i) => T.p[i]), cmin: 0, cmax: 1, colorscale: "Viridis", showscale: nm === bins[0][3], colorbar: { title: { text: "probability" }, thickness: 10, len: 0.5 } },
+      const prop = async (name, k) => { const P = (await Promise.all(REG.map((r) => get(k + "|" + r, () => api("earth/property", { name, region: r, limit: lim }).catch(() => null))))); return P.map((p, ri) => p && { ...p, ri }).filter(Boolean); };
+      const join = (P, f) => P.flatMap((p) => p[f].map((v, i) => (f === "customdata" ? [p.cell[i], p.unit[i], p.sd?.[i], p.ri] : v)));
+      const PC = { po: ["porosity", "porosity (estimated)", 0, 35, [[0, "#3b2c1a"], [0.5, "#c9a54a"], [1, "#fff3b0"]], "%", (G) => `Porosity between wells, sigma ${G.test?.sigma_pct} points (held-out error of the P3.2 model).`],
+        cc: ["co2_capacity", "CO2 capacity", 0, null, [[0, "#e8f1f7"], [0.4, "#5aa4c8"], [1, "#0b3a5d"]], "kt", (G) => `Expected CO2 storage capacity per cell (kt) at the median efficiency (2 %), weighted by P(reservoir, dense CO2, seal, no overpressure).`] };
+      if (PC[st.colour]) { const [nm, title, cmin, cmax, cs, un, why] = PC[st.colour]; const P = await prop(nm, st.colour); if (!P.length) { $("#e-n").textContent = "Not built in this region."; } else { if (my !== st.seq) return;
+        const val = join(P, "value"), hi = cmax ?? Math.max(1, [...val].sort((a, b) => a - b)[Math.floor(val.length * 0.98)] || 1);
+        $("#e-n").textContent = `${why(P[0])} ${P.reduce((n, p) => n + p.shown, 0).toLocaleString()} of ${P.reduce((n, p) => n + p.n, 0).toLocaleString()} cells (evenly thinned).`;
+        tr.push({ type: "scatter3d", mode: "markers", name: title, x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
+          marker: { size: 3.2, opacity: 0.85, color: val, cmin, cmax: hi, colorscale: cs, showscale: true, colorbar: { title: { text: un }, thickness: 10, len: 0.5 } },
+          hovertemplate: `%{customdata[1]}<br>${title} %{marker.color:.1f} ${un}<extra></extra>` }); } }
+      else if (st.colour === "lw") { const P = await prop("legacy_wells", "lw"); if (!P.length) { $("#e-n").textContent = "Not built in this region."; } else { if (my !== st.seq) return;
+        $("#e-n").textContent = `Old wellbores within 2 km that were drilled through each unit, in ${P.reduce((n, p) => n + p.shown, 0).toLocaleString()} of ${P.reduce((n, p) => n + p.n, 0).toLocaleString()} cells. ${P[0].test?.what || ""}.`;
+        tr.push({ type: "scatter3d", mode: "markers", name: "old wells through the unit", x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
+          marker: { size: 3.2, opacity: 0.8, color: join(P, "value"), cmin: 0, cmax: 20, colorscale: [[0, "#d9e7f2"], [0.25, "#f2b84e"], [1, "#a3271c"]], showscale: true, colorbar: { title: { text: "wellbores" }, thickness: 10, len: 0.5 } },
+          hovertemplate: "%{customdata[1]}<br>%{marker.color:.0f} wellbores within 2 km drilled through it<extra>possible CO2 leak paths</extra>" }); } }
+      else if (st.colour === "gr") { const P = await prop("gamma_ray", "gr"); if (!P.length) { $("#e-n").textContent = "No gamma-ray model here: no FORCE log wells."; } else { if (my !== st.seq) return; const t = P[0].test;
+        $("#e-n").textContent = `Gamma ray in ${P.reduce((n, p) => n + p.shown, 0).toLocaleString()} of ${P.reduce((n, p) => n + p.n, 0).toLocaleString()} cells (evenly thinned${P.length < REG.length ? "; only regions with FORCE log wells" : ""}). Held-out wells: error ${t.rmse_model_gAPI} gAPI vs unit mean ${t.rmse_unit_mean_gAPI} and region mean ${t.rmse_pilot_mean_gAPI} (${t.wells} FORCE wells). One value per unit and column; within a unit the log varies by about ${t.within_unit_sd_median_gAPI} gAPI.`;
+        tr.push({ type: "scatter3d", mode: "markers", name: "gamma ray (estimated)", x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
+          marker: { size: 3.2, opacity: 0.8, color: join(P, "value"), cmin: 20, cmax: 150, colorscale: [[0, "#f2d74e"], [0.5, "#8c9a4b"], [1, "#5b3a1a"]], showscale: true, colorbar: { title: { text: "GR (gAPI)" }, thickness: 10, len: 0.5 } },
+          hovertemplate: "%{customdata[1]}<br>gamma ray %{marker.color:.0f} ± %{customdata[2]:.0f} gAPI (estimated between wells)<extra>low = sand-like, high = shale-like</extra>" }); } }
+      else bins.forEach(([lo, hi, op, nm]) => { const x = [], y = [], z = [], cd = [], col = [];
+        D.forEach(([, T], ri) => T.support.forEach((s, i) => { if (s >= lo && s < hi) { x.push(T.x[i]); y.push(T.y[i]); z.push(-(T.top[i] + T.base[i]) / 2); cd.push([T.cell[i], T.unit[i], T.p05[i], T.p95[i], T.support[i], T.top[i], T.base[i], ri]); col.push(T.p[i]); } }));
+        if (!x.length) return;
+        tr.push({ type: "scatter3d", mode: "markers", name: nm, x, y, z, customdata: cd,
+          marker: { size: ALL ? 2.6 : 3.5, opacity: op, color: col, cmin: 0, cmax: 1, colorscale: "Viridis", showscale: nm === bins[0][3], colorbar: { title: { text: "probability" }, thickness: 10, len: 0.5 } },
           hovertemplate: "%{customdata[1]}<br>probability %{marker.color:.2f} (90% range %{customdata[2]:.2f}–%{customdata[3]:.2f})<br>support %{customdata[4]:.2f}<br>%{customdata[5]:.0f}–%{customdata[6]:.0f} m below sea level<extra>click for the evidence</extra>" }); });
-      if (st.wells) { const wx = [], wy = [], wz = []; Wl.forEach((w) => { w.x.forEach((v, i) => { wx.push(v); wy.push(w.y[i]); wz.push(-w.z[i]); }); wx.push(null); wy.push(null); wz.push(null); });
-        tr.push({ type: "scatter3d", mode: "lines", x: wx, y: wy, z: wz, line: { color: "#e0218a", width: 3 }, name: "wells", hoverinfo: "skip" }); }  // magenta: away from the viridis greens
-      const xr = [Math.min(...S.x), Math.max(...S.x)], yr = [Math.min(...S.y), Math.max(...S.y)], zr = [-5500, 0];
-      let cam = null; try { if (g.data?.length) cam = g._fullLayout.scene._scene.getCamera(); } catch {} if (cam) st.cam = cam;
+      if (st.wells) { const wx = [], wy = [], wz = []; D.forEach(([, , Wl]) => Wl.forEach((w) => { w.x.forEach((v, i) => { wx.push(v); wy.push(w.y[i]); wz.push(-w.z[i]); }); wx.push(null); wy.push(null); wz.push(null); }));
+        tr.push({ type: "scatter3d", mode: "lines", x: wx, y: wy, z: wz, line: { color: "#e0218a", width: 3 }, name: "wells", meta: { hl: "wells" }, hoverinfo: "skip" }); }  // magenta: away from the viridis greens
+      if (st.obs && st.t !== "co2_storage" && st.t !== "chance_of_success") {  // backtracking: what the wells found, at vertical depth, coloured like the cells
+        const O = (await Promise.all(REG.map((r) => get(["o", r, st.t].join("|"), () => api("earth/observed", { t: st.t, region: r }).catch(() => null))))).filter(Boolean); if (my !== st.seq) return;
+        const ox = [], oy = [], oz = [], oc = [], ot = [];
+        O.forEach((o) => o.x.forEach((x, i) => { ox.push(x, x, null); oy.push(o.y[i], o.y[i], null); oz.push(-o.top[i], -o.base[i], null); oc.push(o.ev[i], o.ev[i], o.ev[i]);
+          const h = `${o.wellbore[i]} · ${o.unit[i]}<br>observed ${o.ev[i]} (weight ${o.w[i]})<br>${o.top[i]}–${o.base[i]} m TVDSS`; ot.push(h, h, h); }));
+        if (ox.length) tr.push({ type: "scatter3d", mode: "lines", x: ox, y: oy, z: oz, line: { color: oc, cmin: 0, cmax: 1, colorscale: "Viridis", width: 7 }, text: ot, hoverinfo: "text", name: "observed in wells", meta: { hl: "observed" } }); }
+      const kmLL = (x, y) => L3035(x / (111.32 * Math.cos((61 * Math.PI) / 180)) + 3, y / 110.57 + 61);  // the seismic API's local km frame to EPSG:3035
+      if (st.sv.id) { const sv = st.sv, sid = sv.id; if (!LN[sid]) LN[sid] = await api("seismic/lines", { survey: sid }); const arr = LN[sid][sv.axis], idx = arr[Math.round(sv.pos * (arr.length - 1))], ck = [sid, sv.axis, idx, sv.base].join("|");
+        $("#sv-lab").textContent = `${sv.axis} ${idx}`; if (sv.ck !== ck) { sv.cu = await api("seismic/curtain", { survey: sid, axis: sv.axis, index: idx, ...(sv.base ? { baseline: sv.base } : {}) }); sv.ck = ck; } if (my !== st.seq) return;
+        const cu = sv.cu, P = cu.x.map((x, i) => kmLL(x, cu.y[i])), px = P.map((p) => p[0]), py = P.map((p) => p[1]), zz = cu.t_ms.map((t) => -((t / 2) * sv.v)), gn = sv.gain;
+        tr.push({ type: "surface", x: cu.t_ms.map(() => px), y: cu.t_ms.map(() => py), z: zz.map((z) => px.map(() => z)), customdata: cu.t_ms.map((t) => px.map(() => t)), surfacecolor: cu.amp.map((r) => r.map((v) => v / 127)), cmin: -1 / gn, cmax: 1 / gn, showscale: false, opacity: 1, name: sid,
+          ...(KIT.IN.clear ? { opacityscale: KIT.OPQ } : {}), colorscale: [[0, "#2c5aa0"], [0.5, "#f7f7f7"], [1, "#b2182b"]], hovertemplate: `${esc(cu.survey)} ${cu.axis} ${cu.index}<br>two-way time %{customdata:.0f} ms<br>depth preview %{z:.0f} m<extra></extra>`, lighting: { ambient: 1, diffuse: 0 } }); }
+      if (st.tied) { const T = TIED || (TIED = await api("earth/tied", { step: 2 })); if (my !== st.seq) return; const HC = ["#1b9e77", "#d95f02", "#7570b3"];
+        const XY = T.lon.map((r, a) => r.map((lo, b) => (lo == null || T.lat[a][b] == null ? null : L3035(lo, T.lat[a][b]))));
+        T.surfaces.forEach((h, i) => tr.push({ type: "surface", x: XY.map((r) => r.map((p) => p && p[0])), y: XY.map((r) => r.map((p) => p && p[1])), z: h.z.map((r) => r.map((v) => (v == null ? null : -v))), surfacecolor: h.z.map((r) => r.map(() => 1)), colorscale: [[0, HC[i % 3]], [1, HC[i % 3]]], showscale: false, opacity: 0.6,
+          name: h.name + " (tied seismic)", customdata: h.sd, hovertemplate: `${esc(h.name)}: tied seismic horizon<br>%{z:.0f} m (± %{customdata:.0f} m)<extra>Smeaheia, Equinor and Gassnova</extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } })); }
+      const xr = [Math.min(...D.map(([S]) => Math.min(...S.x))), Math.max(...D.map(([S]) => Math.max(...S.x)))], yr = [Math.min(...D.map(([S]) => Math.min(...S.y))), Math.max(...D.map(([S]) => Math.max(...S.y)))], zr = [-5500, 0];
+      st._g = { xr, yr, zr, ar: { x: 1, y: (yr[1] - yr[0]) / (xr[1] - xr[0]), z: ((zr[1] - zr[0]) / 1000 / (xr[1] - xr[0])) * st.ex } };
+      tr.unshift(...(await mapTraces([xr[0], xr[1], yr[0], yr[1]]))); if (my !== st.seq) return;
+      let cam = null; if (!st.camForce) { try { if (g.data?.length) cam = g._fullLayout.scene._scene.getCamera(); } catch {} if (cam) st.cam = cam; } st.camForce = false;
       const ax = (t, r) => ({ title: t, range: r, autorange: false, gridcolor: css("--rule"), color: css("--mut"), showbackground: false });
-      await plot3(g, tr, { margin: { l: 0, r: 0, t: 0, b: 0 }, uirevision: "earth", legend: { orientation: "h", x: 0.02, y: 0.02, font: { size: 11 } }, scene: { aspectmode: "manual", aspectratio: { x: 1, y: (yr[1] - yr[0]) / (xr[1] - xr[0]), z: ((zr[1] - zr[0]) / 1000 / (xr[1] - xr[0])) * st.ex },
+      g._hl0 = null;  // a new drawing: forget any highlight saved from the previous one
+      await plot3(g, tr, { margin: { l: 0, r: 0, t: 0, b: 0 }, uirevision: st.cam ? "earth" : "earth-" + st.seq, legend: { orientation: "h", x: 0.02, y: 0.02, font: { size: 11 } }, scene: { aspectmode: "manual", aspectratio: { x: 1, y: (yr[1] - yr[0]) / (xr[1] - xr[0]), z: ((zr[1] - zr[0]) / 1000 / (xr[1] - xr[0])) * st.ex },
         camera: st.cam || { eye: { x: 1.3, y: -1.5, z: 0.9 } }, xaxis: ax("East (km, EPSG:3035)", xr), yaxis: ax("North (km)", yr), zaxis: { ...ax("Depth below sea level (m)", zr), tickvals: [0, -1000, -2000, -3000, -4000, -5000], ticktext: ["0", "1000", "2000", "3000", "4000", "5000"] } } });
-      g.removeAllListeners?.("plotly_click"); g.on("plotly_click", async (e) => { const cd = e.points?.[0]?.customdata; if (!Array.isArray(cd) || typeof cd[0] !== "number") return; const c = await api("earth/cell", { t: st.t, cell: cd[0] });
-        $("#e-cb").innerHTML = `<p><b>${esc(c.unit)}</b> (${esc(c.group)}) at ${c.x_km}, ${c.y_km} km: ${c.top_m}–${c.base_m} m below sea level, ${c.thickness_m} m thick, ${c.depth_below_seabed_m} m below the seabed${c.group_top_sd_m != null ? `; group top ± ${c.group_top_sd_m} m, nearest pick ${c.group_top_nearest_pick_km} km` : ""}.</p>
+      g.removeAllListeners?.("plotly_click"); g.on("plotly_click", async (e) => { const cd = e.points?.[0]?.customdata; if (!Array.isArray(cd) || typeof cd[0] !== "number") return; const rg = REG[cd[cd.length - 1]] && ALL ? REG[cd[cd.length - 1]] : REG[0]; const c = await api("earth/cell", { t: st.t, cell: cd[0], region: rg }); st.cell = cd[0]; st.cellRegion = rg; desk?.sync?.();
+        $("#e-cb").innerHTML = `<p><b>${esc(c.unit)}</b> (${esc(c.group)})${ALL ? ` in ${esc(rg.replace(/_/g, " "))}` : ""} at ${c.x_km}, ${c.y_km} km: ${c.top_m}–${c.base_m} m below sea level, ${c.thickness_m} m thick, ${c.depth_below_seabed_m} m below the seabed${c.group_top_sd_m != null ? `; group top ± ${c.group_top_sd_m} m, nearest pick ${c.group_top_nearest_pick_km} km` : ""}.</p>
           <p>${esc(c.title)}: <b>${c.p}</b> (90% range ${c.p05}–${c.p95}); support <b>${c.support}</b>. Published as: ${esc(c.published || "composite")}.</p>
-          ${c.nearest_observations ? `<table style="font-size:12px"><tr><th>nearest ${esc(c.unit)} observation<th class=r>km<th class=r>observed<th class=r>weight</tr>${c.nearest_observations.map((o) => `<tr><td>${esc(o.wellbore)}<td class=r>${o.distance_km}<td class=r>${o.event}<td class=r>${o.weight}</tr>`).join("")}</table><p class="tip">Unit rate across the pilot: ${c.unit_rate}. Model weights: ${esc(JSON.stringify(c.coefficients))}.</p>` : `<p>Terms here: reservoir ${c.terms?.reservoir}, overpressure ${c.terms?.overpressure}. ${esc(c.composite?.terms || "")}</p>`}
+          ${c.nearest_observations ? `<table style="font-size:12px"><tr><th>nearest ${esc(c.unit)} observation<th class=r>km<th class=r>observed<th class=r>weight</tr>${c.nearest_observations.map((o) => `<tr><td>${esc(o.wellbore)}<td class=r>${o.distance_km}<td class=r>${o.event}<td class=r>${o.weight}</tr>`).join("")}</table><p class="tip">Unit rate across the region: ${c.unit_rate}. Model weights: ${esc(JSON.stringify(c.coefficients))}.</p>` : `<p>Terms here: reservoir ${c.terms?.reservoir}, overpressure ${c.terms?.overpressure}. ${esc(c.composite?.terms || "")}</p>`}
+          ${c.factors ? `<p class="tip">Petroleum system here: nearest mature source ${c.factors.kitchen_km} km (${c.factors.kitchen_at_max_burial_km} km at maximum burial, gas window ${c.factors.gas_kitchen_km} km); source below in the oil window with p ${c.factors.source_mature_below_p}; nearest mapped fault ${c.factors.fault_km} km; ${c.factors.on_structural_high ? "on a mapped structural high" : "not on a mapped high"}; closure on the unit top ${c.factors.closure_m} m${c.factors.salt_km ? `; salt ${c.factors.salt_km} km` : ""}${c.factors.charge_p != null ? `; oil migrating along this unit reaches it with p ${c.factors.charge_p} (${c.factors.charge_km2} km² of mature kitchen upstream)` : ""}. Used by this model: ${esc(c.factors.used_by_model.map((f) => FEATN[f] || f).join(", ") || "none (none beat the model without them on held-out wells)")}.</p>` : ""}
+          ${c.elements ? `<p>Elements: ${Object.entries(c.elements).map(([k, v]) => `${k} <b>${v}</b>`).join(" × ")}; limiting element: <b>${esc(c.limiting_element || "")}</b>.</p>` : ""}
+          ${c.co2_capacity_kt != null ? `<p class="tip">Expected CO2 capacity of this cell: <b>${c.co2_capacity_kt}</b> kt (median efficiency).</p>` : ""}
+          ${c.legacy_wells != null ? `<p class="tip">Old wellbores within 2 km drilled through this unit: <b>${c.legacy_wells}</b>. ${esc(c.legacy_note || "")}.</p>` : ""}
           ${c.rules?.length ? `<p class="tip">Rules: ${c.rules.map((r) => `${esc(r.id)} (${esc(r.verdict)})`).join(", ")}.</p>` : ""}`; $("#sec-e-cell").classList.remove("fold"); });
     };
-    $("#e-t").onchange = (e) => { st.t = e.target.value; draw(); }; $("#e-p").oninput = (e) => { st.pmin = +e.target.value; draw(); }; $("#e-s").oninput = (e) => { st.smin = +e.target.value; draw(); };
+    const setG = (a) => { st.show = new Set(a.filter((g) => groups.includes(g))); $$("[data-g]").forEach((c) => (c.checked = st.show.has(c.dataset.g))); draw(); };
+    const setT = (t) => { st.t = t; $("#e-t").value = t; if (st.pauto) { st.pmin = autoP(t); $("#e-p").value = st.pmin; } };
+    $("#e-t").onchange = (e) => { setT(e.target.value); draw(); };
+    $("#e-p").oninput = (e) => { st.pmin = +e.target.value; st.pauto = false; $("#e-pa").checked = false; draw(); };
+    $("#e-pa").onchange = (e) => { st.pauto = e.target.checked; if (st.pauto) { st.pmin = autoP(st.t); $("#e-p").value = st.pmin; } draw(); };
+    $("#e-s").oninput = (e) => { st.smin = +e.target.value; draw(); };
     $("#e-f").onchange = (e) => { st.fade = e.target.checked; draw(); }; $("#e-c").onchange = (e) => { st.colour = e.target.value; draw(); }; $("#e-w").onchange = (e) => { st.wells = e.target.checked; draw(); }; $("#e-x").oninput = (e) => { st.ex = +e.target.value; draw(); };
     $("#e-g").onchange = (e) => { const n = e.target.dataset.g; if (!n) return; e.target.checked ? st.show.add(n) : st.show.delete(n); draw(); };
-    const setG = (a) => { st.show = new Set(a); $$("[data-g]").forEach((c) => (c.checked = st.show.has(c.dataset.g))); draw(); };
-    $("#e-none").onclick = () => setG([]); $("#e-all").onclick = () => setG(groups);
+    $("#e-ml").onchange = (e) => { const n = e.target.dataset.m; if (!n) return; e.target.checked ? st.map.add(n) : st.map.delete(n); draw(); };
+    $("#e-none").onclick = () => setG([]); $("#e-all").onclick = () => setG(groups); $("#e-sug").onclick = () => setG(sugg(st.t));
+    $$("[data-pre]").forEach((b) => (b.onclick = () => { const [, , t] = PRESET.find((p) => p[0] === b.dataset.pre); st.colour = "p"; $("#e-c").value = "p"; st.pauto = true; $("#e-pa").checked = true; st.smin = 0; $("#e-s").value = 0; st.fade = true; $("#e-f").checked = true;
+      setT(t); setG(sugg(t)); }));
+    $("#e-top").onclick = () => { st.cam = { eye: { x: 0, y: 0, z: 2.4 }, up: { x: 0, y: 1, z: 0 } }; st.camForce = true; draw(); };
+    $("#e-reset").onclick = () => { st.cam = null; st.camForce = true; draw(); };
+    [$("#e-g"), $("#sec-e-m")].forEach((el) => el && hoverLayers(el, () => $("#pe"), (n) => (n.startsWith("map:") || n === "wells" || n === "observed" ? null : gcol(n))));
+    $("#e-o").onchange = (e) => { st.obs = e.target.checked; draw(); };
+    const KIT = seismicKit({ SV, LN, get sv() { return st.sv; }, later: draw });  // the inspector (side pane, 2D and 3D), shared module
+    if ($("#sv-id")) { const sv = st.sv; $("#sv-id").onchange = (e) => { sv.id = e.target.value; sv.base = ""; sv.ck = ""; const me = SV.find((x) => x.id === sv.id); $("#sv-base").innerHTML = '<option value="">none (amplitude)</option>' + SV.filter((x) => me && me.processing && x.id !== sv.id && x.processing === me.processing).map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join(""); draw(); };
+      $$('[name="sv-ax"]').forEach((r) => (r.onchange = (e) => { sv.axis = e.target.value; sv.ck = ""; draw(); })); $("#sv-pos").oninput = (e) => { sv.pos = +e.target.value; draw(); };
+      $("#sv-v").oninput = (e) => { sv.v = +e.target.value; $("#sv-vv").textContent = sv.v.toFixed(1) + " km/s"; draw(); }; $("#sv-g").oninput = (e) => { sv.gain = +e.target.value; draw(); }; $("#sv-base").onchange = (e) => { sv.base = e.target.value; sv.ck = ""; draw(); };
+      $("#sv-tied").onchange = (e) => { st.tied = e.target.checked; draw(); };
+      $("#sv-fly").onclick = () => { const x = SV.find((q) => q.id === sv.id) || SV[0], g = st._g; if (!g || !x) return; const [cx, cy] = L3035(x.centre[1], x.centre[0]);
+        const c = { x: ((cx - (g.xr[0] + g.xr[1]) / 2) / (g.xr[1] - g.xr[0])) * g.ar.x, y: ((cy - (g.yr[0] + g.yr[1]) / 2) / (g.yr[1] - g.yr[0])) * g.ar.y, z: ((-1000 - (g.zr[0] + g.zr[1]) / 2) / (g.zr[1] - g.zr[0])) * g.ar.z };
+        st.cam = { center: c, eye: { x: c.x + 0.3, y: c.y - 0.35, z: c.z + 0.25 } }; st.camForce = true; draw(); }; }
     REDRAW.scene = draw; await draw();
-    minimap($(".plotwrap"), M.pilot, `Pilot: ${M.pilot.lat[0]}–${M.pilot.lat[1]}°N, ${M.pilot.lon[0]}–${M.pilot.lon[1]}°E (Horda Platform, northern Viking Graben)`);
+    { const la = [Math.min(...MS.map((m) => m.pilot.lat[0])), Math.max(...MS.map((m) => m.pilot.lat[1]))], lo = [Math.min(...MS.map((m) => m.pilot.lon[0])), Math.max(...MS.map((m) => m.pilot.lon[1]))];
+      minimap($(".plotwrap"), { lat: la, lon: lo }, ALL ? `All ${REG.length} regions: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E` : `${M.pilot.title}: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E`); }
+    $("#e-r").onchange = (e) => { location.hash = "earth/" + e.target.value; };
   },
 
   async scene(_, live) {
@@ -287,7 +587,7 @@ const PAGES = {
     }));
     sec("L", "data", "Data", `<div class="row"><label>Region <select id="reg"><option value="58,62">North Sea (58–62°N)</option><option value="0,90">whole shelf (small)</option><option value="62,69">Norwegian Sea (62–69°N)</option><option value="69,90">Barents Sea (>69°N)</option></select></label></div>
       <div class="row"><label>Depth measured from <select id="ref"><option value="rig">rig floor (as recorded)</option><option value="sea">sea level</option><option value="bed">seabed</option></select></label></div>
-<p class="tip" style="margin:2px 0">Formations (up to ${MAXF}; each one adds a sheet and its sticks) · <button class="lnk" id="f-none" type="button">none</button> · <button class="lnk" id="f-top" type="button">largest 8</button></p><div id="fl" style="max-height:220px;overflow:auto">${fl.map((f) => `<label class="chk" style="display:flex"><input type="checkbox" data-f="${esc(f.name)}" ${st.sel.has(f.name) ? "checked" : ""}> ${esc(f.name)} <span class="tip">${f.wells}</span></label>`).join("")}</div>`, true);
+<p class="tip" style="margin:2px 0">Formations (up to ${MAXF}; each one adds a sheet and its sticks) · <button class="lnk" id="f-none" type="button">none</button> · <button class="lnk" id="f-top" type="button">largest 8</button></p><div id="fl" style="max-height:220px;overflow:auto">${fl.map((f, i) => `<label class="chk lay" data-hl="${esc(f.name)}"><input type="checkbox" data-f="${esc(f.name)}" ${st.sel.has(f.name) ? "checked" : ""}>${swatch(LAYC[i % LAYC.length])} ${esc(f.name)} <span class="tip">${f.wells}</span></label>`).join("")}</div><p class="tip" style="margin:2px 0">Point at a formation to pick out its sheet in its colour.</p>`, true);
     sec("L", "display", "Display", `${palUI()}
       <div class="row"><label class="chk"><input type="checkbox" id="cw" checked> wells</label><label class="chk"><input type="checkbox" id="cs" checked> estimate sheets</label><label class="chk"><input type="checkbox" id="cb" checked> unusual areas</label><label class="chk"><input type="checkbox" id="cm" checked> coast and grid</label></div>
       <div class="row"><label class="chk" title="${esc(spatial ? evTip(spatial) : "")}"><input type="checkbox" id="c-sp" ${st.spatial ? "checked" : ""} ${spatial?.built ? "" : "disabled"}> neighbour evidence ${tag(spatial?.status || "not_built", STATUS_WORDS[spatial?.status || "not_built"])}</label></div>
@@ -336,7 +636,7 @@ const PAGES = {
       const sdepth = (s) => (st.ref === "bed" ? s.depth_sb : s.depth.map((r) => r.map((v) => (v == null ? null : st.ref === "sea" ? v - s.kb : v))));
       const xs = Wl.map((w) => w.x).concat(...S.surfaces.map((s) => s.x.flat())), ys = Wl.map((w) => w.y).concat(...S.surfaces.map((s) => s.y.flat()));
       const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), zmax = Math.max(...Wl.map((w) => dz(w.bot, w)), 500);
-      if (st.surf) S.surfaces.forEach((s, i) => tr.push({ type: "surface", x: s.x, y: s.y, z: sdepth(s).map((r) => r.map((v) => (v == null ? null : -v))), surfacecolor: s.rate, cmin: CMIN, cmax: CMAX, opacity: st.op, showscale: i === 0, name: s.formation,
+      if (st.surf) S.surfaces.forEach((s, i) => tr.push({ type: "surface", x: s.x, y: s.y, z: sdepth(s).map((r) => r.map((v) => (v == null ? null : -v))), surfacecolor: s.rate, cmin: CMIN, cmax: CMAX, opacity: st.op, showscale: i === 0, name: s.formation, meta: { hl: s.formation },
         colorscale: pal().stops, colorbar: { title: "model estimate", orientation: "h", len: 0.28, thickness: 9, x: 0.5, y: 0.1, tickformat: ".0%" }, hovertemplate: `<b>${esc(s.formation)}</b> (estimate sheet)<br>Smoothed interval mid-depth: %{z:.0f} m<br>Model estimate: <b>%{surfacecolor:.1%}</b> of ${esc(w.rows)} ${esc(w.hit)}<br>${st.spatial ? "Formation + neighbouring wells" : "Formation/group only"} · not an observation<extra></extra>` }));
       if (st.wells) { const rg = CMAX - CMIN, c1 = CMIN + 0.1 * rg, c2 = CMIN + 0.4 * rg, P = (x) => pct(x, x < 0.1 ? 1 : 0), pb = pal().bins, bins = [["observed: too few to judge", css("--mut")], [`observed under ${P(c1)}`, pb[0]], [`observed ${P(c1)} to ${P(c2)}`, pb[1]], [`observed ${P(c2)} to ${P(CMAX)}`, pb[2]], [`observed over ${P(CMAX)}`, pb[3]]], MINN = TARGET === "green_clay" ? 3 : 1, bi = (w) => (w.rows < MINN || w.obs == null ? 0 : w.obs < c1 ? 1 : w.obs < c2 ? 2 : w.obs < CMAX ? 3 : 4);
         STICKS = bins.map(([nm, col], b) => [nm, col, Wl.filter((w) => bi(w) === b).length]);
@@ -367,14 +667,14 @@ const PAGES = {
       if (st.map) tr.unshift(...(await mapLines({ x0, x1, y0, y1 })));
       // Axis ranges are fixed from the data of the chosen formations (not from whatever is switched on), so toggling the coast, seismic or sheets never rescales or moves the scene.
       const mg = 80, rx = [x0 - mg, x1 + mg], ry = [y0 - mg, y1 + mg], seisDeep = sv.id && st.ref !== "bed" && sv.cu ? (Math.max(...sv.cu.t_ms) / 2) * sv.v + (st.ref === "rig" ? 25 : 0) : 0, zlow = Math.max(zmax, seisDeep) * 1.03, zr = [-zlow, zlow * 0.02];
-      const ar = { x: 1, y: (ry[1] - ry[0]) / (rx[1] - rx[0]), z: ((zr[1] - zr[0]) / 1000 / (rx[1] - rx[0])) * ex }; S._g = { x0: rx[0], x1: rx[1], y0: ry[0], y1: ry[1], zr, ar }; const zt = [0, 500, 1000, 2000, 3000, 4000, 5000, 6000].filter((v) => v <= zlow);
+      const ar = { x: 1, y: (ry[1] - ry[0]) / (rx[1] - rx[0]), z: ((zr[1] - zr[0]) / 1000 / (rx[1] - rx[0])) * ex }; S._g = { x0: rx[0], x1: rx[1], y0: ry[0], y1: ry[1], zr, ar }; st._d = { x0, x1, y0, y1 }; const zt = [0, 500, 1000, 2000, 3000, 4000, 5000, 6000].filter((v) => v <= zlow);
       const axs = (t, range) => ({ title: t, range, autorange: false, gridcolor: css("--rule"), color: css("--mut"), backgroundcolor: "rgba(0,0,0,0)", showbackground: false });
       // the camera: the view you have right now is read back from the live scene and passed again, so a redraw never moves it; only a new region starts from the default view
       let liveCamera = null; try { liveCamera = $("#p3")?._fullLayout?.scene?._scene?.getCamera?.() || null; } catch {}
       const cam = st.camFor !== st.reg ? st.cam || { eye: { x: 1.4, y: -1.5, z: 0.8 } } : liveCamera || st.cam || { eye: { x: 1.4, y: -1.5, z: 0.8 } };
-      if (!active()) return; const T3 = tick(); await plot3($("#p3"), tr, { uirevision: st.reg, margin: { l: 0, r: 0, t: 0, b: 0 }, legend: { orientation: "h", x: 0.3, y: 0.02, bgcolor: "rgba(0,0,0,0)", font: { size: 11 } }, scene: { uirevision: st.reg, aspectmode: "manual", aspectratio: ar, camera: cam, xaxis: axs("East (km)", rx), yaxis: axs("North (km)", ry), zaxis: { ...axs(refLab[st.ref], zr), tickvals: zt.map((v) => -v), ticktext: zt.map(String) } } });
+      if (!active()) return; const T3 = tick(); if ($("#p3")) $("#p3")._hl0 = null; await plot3($("#p3"), tr, { uirevision: st.reg, margin: { l: 0, r: 0, t: 0, b: 0 }, legend: { orientation: "h", x: 0.3, y: 0.02, bgcolor: "rgba(0,0,0,0)", font: { size: 11 } }, scene: { uirevision: st.reg, aspectmode: "manual", aspectratio: ar, camera: cam, xaxis: axs("East (km)", rx), yaxis: axs("North (km)", ry), zaxis: { ...axs(refLab[st.ref], zr), tickvals: zt.map((v) => -v), ticktext: zt.map(String) } } });
       if (!active()) return;
-      st.camFor = st.reg; const pw = $(".plotwrap"); if (pw) REDRAW.k = pw.clientWidth + "x" + pw.clientHeight;
+      st.camFor = st.reg; st.mini?.(); const pw = $(".plotwrap"); if (pw) REDRAW.k = pw.clientWidth + "x" + pw.clientHeight;
       if (PERF) console.log("PERF3D " + JSON.stringify({ api_ms: Math.round(T2 - T1), build_traces_ms: Math.round(T3 - T2), plotly_ms: Math.round(tick() - T3), points: tr.reduce((n, d) => n + (d.x ? d.x.flat().length : 0), 0), traces: tr.length, wells: Wl.length }));
       $("#hs").innerHTML = hs.length ? hs.map((h) => `<div class="hs ${st.hs === h.id ? "sel" : ""}" data-h="${esc(h.id)}"><b>#${hs.indexOf(h) + 1} ${esc(h.formation)}</b> · ${tag(h.kind, h.kind === "hot" ? "higher than usual" : "lower than usual")} · ${h.p_adj < 0.05 ? tag("ok", "survives correction") : tag("warnc", "exploratory")}<p><b>${pct(h.rate)}</b> of ${h.rows} ${W().rows} ${W().hit}, vs <b>${pct(h.formation_rate)}</b> across ${esc(h.formation)} (${h.lift}× ${h.kind === "hot" ? "higher" : "lower"}); ${h.wells} wells in a 20 km window</p><p>${esc(h.text)}</p></div>`).join("") : '<p class="tip">No window here has enough wells and trials to test.</p>';
       const kb = $("#keybody"); if (kb) kb.innerHTML = `<p><b>A stick</b> (the vertical bars) is <b>one well's interval inside one formation</b>: it starts where the well enters the formation and ends where it leaves it. Its colour is the <b>observed share</b>: how many of the ${esc(W().rows)} recorded there ${esc(W().hit)}, divided by all of them.</p>
@@ -406,6 +706,7 @@ const PAGES = {
       $$("[data-f]").forEach((e) => { e.disabled = !e.checked && st.sel.size >= MAXF; });
       draw();
     }));
+    { const fi = new Map(fl.map((f, i) => [f.name, LAYC[i % LAYC.length]])); hoverLayers($("#fl"), () => $("#p3"), (n) => fi.get(n)); }
     const setF = (names) => { st.sel = new Set(names); $$("[data-f]").forEach((e) => { e.checked = st.sel.has(e.dataset.f); e.disabled = !e.checked && st.sel.size >= MAXF; }); draw(); };
     $("#f-none").onclick = () => setF([]); $("#f-top").onclick = () => setF($$("[data-f]").slice(0, 8).map((e) => e.dataset.f));  // the list is sorted by well count
     bindPal(() => later()); $("#reg").onchange = (e) => { st.reg = e.target.value; st.hs = null; st.cam = null; draw(); }; $("#ref").onchange = (e) => { st.ref = e.target.value; draw(); };
@@ -434,130 +735,11 @@ const PAGES = {
       $("#sv-fly").onclick = () => { const x = SV.find((q) => q.id === sv.id) || SV[0]; if (!S?._g || !x) return; const g = S._g, ar = g.ar, cx = KMX(x.centre[1]), cy = KMY(x.centre[0]); const c = { x: ((cx - (g.x0 + g.x1) / 2) / (g.x1 - g.x0)) * ar.x, y: ((cy - (g.y0 + g.y1) / 2) / (g.y1 - g.y0)) * ar.y, z: ((-1000 - (g.zr[0] + g.zr[1]) / 2) / (g.zr[1] - g.zr[0])) * ar.z };
         Plotly.relayout($("#p3"), { "scene.camera": { center: c, eye: { x: c.x + 0.3, y: c.y - 0.35, z: c.z + 0.2 } } }); }; }
 
-    // ---- seismic inspector: a side pane with a 2D view (section or time slice) and a 3D cube view. It shares the survey, the line and the baseline with the big scene.
-    const IN = { el: null, mode: "inline", il: null, xl: null, t: 1000, gain: 1, cmap: "seis", depth: false, clear: false, enrich: false, lay: "only2d", detail: 350000, sid: "", cache: new Map(), wells: [], seq: 0 };
-    const WELLC = "#00b84a";  // wells: a saturated green, away from the blue-white-red and grey seismic colours
-    const CM = { seis: [[0, "#2c5aa0"], [0.5, "#f7f7f7"], [1, "#b2182b"]], gray: [[0, "#000000"], [1, "#ffffff"]] };
-    // see-through: near-zero amplitudes (the white or mid-grey of the colour scale) become transparent, so only reflections remain
-    const CLEAR = { seis: [[0, "rgba(44,90,160,1)"], [0.4, "rgba(120,150,200,0.6)"], [0.5, "rgba(247,247,247,0)"], [0.6, "rgba(210,120,120,0.6)"], [1, "rgba(178,24,43,1)"]],
-      gray: [[0, "rgba(0,0,0,1)"], [0.4, "rgba(90,90,90,0.6)"], [0.5, "rgba(128,128,128,0)"], [0.6, "rgba(170,170,170,0.6)"], [1, "rgba(255,255,255,1)"]] };
-    const OPQ = [[0, 1], [0.38, 0.55], [0.5, 0], [0.62, 0.55], [1, 1]];
-    const cmap = () => (IN.clear ? CLEAR : CM)[IN.cmap];
-    const icache = (k, f) => (IN.cache.has(k) ? Promise.resolve(IN.cache.get(k)) : f().then((v) => (IN.cache.set(k, v), v)));
-    const Yv = (t) => (IN.depth ? (t / 2) * st.sv.v : t), Ylab = () => (IN.depth ? "Depth preview (m, uncalibrated)" : "Survey two-way time (ms)");
-    const inspectLater = (() => { let t; return () => { clearTimeout(t); t = setTimeout(inspectDraw, 90); }; })();
-    const nearIdx = (arr, v) => arr.reduce((b, x, i) => (Math.abs(x - v) < Math.abs(arr[b] - v) ? i : b), 0);
-    function inspectSetup(m) { const L = LN[m.id], set = (id, max, val) => { const e = $(id); e.min = 0; e.max = max; e.value = val; };
-      set("#si-il", L.inline.length - 1, nearIdx(L.inline, IN.il)); set("#si-xl", L.crossline.length - 1, nearIdx(L.crossline, IN.xl)); const t = $("#si-t"); t.min = m.t0_ms; t.max = m.t_end_ms; t.step = m.dt_ms; t.value = IN.t; }
-    async function inspectDraw() {
-      const sv = st.sv, my = ++IN.seq, m = SV.find((x) => x.id === sv.id); if (!m || !IN.el) return;
-      if (IN.sid !== sv.id) { IN.sid = sv.id; IN.cam = IN.blockCam = null; if (!LN[sv.id]) LN[sv.id] = await api("seismic/lines", { survey: sv.id }); const L = LN[sv.id]; IN.il = L.inline[L.inline.length >> 1]; IN.xl = L.crossline[L.crossline.length >> 1]; IN.t = Math.round((m.t0_ms + m.t_end_ms) / 2); IN.wells = await api("seismic/wells", { survey: sv.id }); inspectSetup(m); }
-      if (!IN.el) return;
-      const L = LN[sv.id], b = sv.base || "", k = (...a) => [sv.id, b, ...a].join("|"), q = (o) => ({ survey: sv.id, ...(b ? { baseline: b } : {}), ...o });
-      const en = IN.enrich ? await Promise.all([icache(k("ei", IN.il, sv.v), () => api("seismic/enrich", { survey: sv.id, axis: "inline", index: IN.il, v: sv.v })), icache(k("ex", IN.xl, sv.v), () => api("seismic/enrich", { survey: sv.id, axis: "crossline", index: IN.xl, v: sv.v }))]) : null;
-      const [inl, xln, tsl] = await Promise.all([icache(k("i", IN.il), () => api("seismic/curtain", q({ axis: "inline", index: IN.il, tstep: 1 }))), icache(k("x", IN.xl), () => api("seismic/curtain", q({ axis: "crossline", index: IN.xl, tstep: 1 }))), icache(k("t", IN.t), () => api("seismic/slice", q({ t_ms: IN.t })))]);
-      if (my !== IN.seq || !IN.el) return;
-      const p99 = m.amp_p99, real = (v) => (v == null ? null : (v / 127) * p99), zm = p99 / IN.gain, cs = cmap(), cs3 = CM[IN.cmap], see = IN.clear ? { opacityscale: OPQ } : {}, stepI = Math.abs(L.inline[1] - L.inline[0]) || 1, stepX = Math.abs(L.crossline[1] - L.crossline[0]) || 1;
-      $("#si-ilv").textContent = IN.il; $("#si-xlv").textContent = IN.xl; $("#si-tv").textContent = Math.round(tsl.t_ms) + " ms"; $("#si-gv").textContent = IN.gain.toFixed(1) + "×";
-      $("#si-title").textContent = `${m.name}: ` + ({ inline: `inline ${IN.il}`, crossline: `crossline ${IN.xl}`, time: `time slice at ${Math.round(tsl.t_ms)} ms` }[IN.mode]); $("#si-mode-lab").textContent = { inline: `Inline section ${IN.il}`, crossline: `Crossline section ${IN.xl}`, time: `Time slice at ${Math.round(tsl.t_ms)} ms` }[IN.mode];
-      // ---- 2D view
-      let t2, lay2; const wl = [];
-      if (IN.mode === "time") {
-        t2 = [{ type: "heatmap", x: tsl.xl, y: tsl.il, z: tsl.amp.map((r) => r.map(real)), colorscale: cs, zmin: -zm, zmax: zm, colorbar: { thickness: 8, len: 0.8 }, hovertemplate: "Inline %{y}<br>Crossline %{x}<br>Amplitude %{z:.0f}<extra></extra>" }];
-        IN.wells.forEach((w) => wl.push({ type: "scatter", mode: "markers+text", x: [w.xl], y: [w.il], text: [w.name], textposition: "top center", marker: { symbol: "x", size: 12, color: WELLC, line: { width: 2 } }, textfont: { color: WELLC }, hovertemplate: `Well ${esc(w.name)}<br>${w.dist_m} m from the nearest trace<extra></extra>`, showlegend: false }));
-        lay2 = { xaxis: { title: "Crossline number" }, yaxis: { title: "Inline number" } };
-      } else {
-        const cu = IN.mode === "inline" ? inl : xln, xs = IN.mode === "inline" ? cu.xl : cu.il, ys = cu.t_ms.map(Yv), lab = IN.mode === "inline" ? [`Inline ${cu.index}`, "Crossline"] : [`Crossline ${cu.index}`, "Inline"];
-        t2 = [{ type: "heatmap", x: xs, y: ys, z: cu.amp.map((r) => r.map(real)), colorscale: cs, zmin: -zm, zmax: zm, colorbar: { thickness: 8, len: 0.8 }, hovertemplate: `${lab[0]}<br>${lab[1]} %{x}<br>${IN.depth ? "Depth %{y:.0f} m" : "Time %{y:.0f} ms"}<br>Amplitude %{z:.0f}<extra></extra>` }];
-        IN.wells.filter((w) => (IN.mode === "inline" ? Math.abs(w.il - IN.il) <= stepI * 1.5 : Math.abs(w.xl - IN.xl) <= stepX * 1.5)).forEach((w) => { const x = IN.mode === "inline" ? w.xl : w.il; wl.push({ type: "scatter", mode: "lines+text", x: [x, x], y: [ys[0], ys.at(-1)], text: [w.name, ""], textposition: "bottom right", line: { color: WELLC, width: 3 }, textfont: { color: WELLC, size: 12 }, hovertemplate: `Well ${esc(w.name)}<br>${w.dist_m} m from the nearest trace<extra></extra>`, showlegend: false }); });
-        lay2 = { xaxis: { title: IN.mode === "inline" ? "Crossline number (west to east)" : "Inline number" }, yaxis: { title: Ylab(), autorange: "reversed" } };
-      }
-      const HC = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666"];
-      if (en && IN.mode !== "time") {
-        const E = IN.mode === "inline" ? en[0] : en[1], step = IN.mode === "inline" ? stepX : stepI, wide = step * 6;
-        E.horizons.forEach((h, i) => wl.push({ type: "scatter", mode: "lines", x: h.along, y: h.twt.map((t) => (t == null ? null : Yv(t))), line: { color: HC[i % HC.length], width: 2 }, connectgaps: false, name: h.name.replace(" GP", " Gp").replace(" FM", " Fm"), hovertemplate: `${esc(h.name)} (interpreted horizon)<br>${IN.depth ? "%{y:.0f} m" : "%{y:.0f} ms"}<extra></extra>`, showlegend: true }));
-        E.wells.filter((w) => (IN.mode === "inline" ? Math.abs(w.il - IN.il) <= stepI * 1.5 : Math.abs(w.xl - IN.xl) <= stepX * 1.5)).forEach((w) => { const x0 = IN.mode === "inline" ? w.xl : w.il;
-          if (w.gr) wl.push({ type: "scatter", mode: "lines", x: w.gr.v.map((g) => x0 + (Math.min(Math.max(g, 0), 150) / 150) * wide), y: w.gr.twt.map(Yv), line: { color: "#7a3ff2", width: 1.4 }, customdata: w.gr.v.map((g, i) => [g, w.gr.tvdss[i]]), hovertemplate: `${esc(w.name)} gamma ray %{customdata[0]:.0f} gAPI<br>%{customdata[1]:.0f} m below sea level<br>${esc(w.log_source)}<extra></extra>`, showlegend: false });
-          const tp = (w.tops || []).filter((t) => t.level === "GROUP" || t.level === "FORMATION");
-          if (tp.length) wl.push({ type: "scatter", mode: "markers+text", x: tp.map(() => x0), y: tp.map((t) => Yv(t.twt)), text: tp.map((t) => (t.level === "GROUP" ? t.name.replace(" GP", "") : "")), textposition: "middle left", textfont: { size: 9, color: css("--ink") }, marker: { symbol: "line-ew-open", size: 14, color: css("--ink"), line: { width: 2 } }, customdata: tp.map((t) => [t.name, t.md, t.tvdss]), hovertemplate: `${esc(w.name)}: top %{customdata[0]}<br>MD %{customdata[1]:.0f} m, %{customdata[2]:.0f} m below sea level<extra>Sodir formation top</extra>`, showlegend: false }); });
-      }
-      const g2 = $("#si2d"); if (!g2 || !IN.el) return; if (g2.offsetWidth) await plot(g2, [...t2, ...wl], { ...lay2, margin: { l: 54, r: 10, t: 6, b: 40 }, uirevision: IN.mode + sv.id, showlegend: !!en, legend: { orientation: "h", y: -0.12, font: { size: 10 } } });
-      g2.removeAllListeners?.("plotly_hover"); g2.on && g2.on("plotly_hover", (e) => { const pt = e.points?.[0]; if (!pt || pt.data.type !== "heatmap") return; let la = "", pos = "";
-        if (IN.mode === "time") { const i = tsl.il.indexOf(pt.y), j = tsl.xl.indexOf(pt.x); pos = `inline ${pt.y}, crossline ${pt.x}, ${Math.round(tsl.t_ms)} ms`; } else { const cu = IN.mode === "inline" ? inl : xln, i = nearIdx(IN.mode === "inline" ? cu.xl : cu.il, pt.x); la = ` · ${cu.lat[i]}° N, ${cu.lon[i]}° E · ${cu.dist_km[i]} km along the line`; pos = `${IN.mode === "inline" ? "inline " + cu.index + ", crossline " + pt.x : "crossline " + cu.index + ", inline " + pt.x}, ${IN.depth ? Math.round(pt.y) + " m" : Math.round(pt.y) + " ms"}`; }
-        $("#sihov").innerHTML = `<b>${pos}</b> · amplitude <b>${Math.round(pt.z)}</b> (${(pt.z / p99).toFixed(2)} of the 99th percentile, ${p99.toFixed(0)})${la}`; });
-      // ---- 3D cube view: the two sections and the time slice through a transparent box, with our wells
-      const tmin = m.t0_ms, tmax = m.t_end_ms, zt = -Yv(tmin), zb = -Yv(tmax), pl = [];
-      [["inline", inl], ["crossline", xln]].forEach(([nm, cu]) => pl.push({ type: "surface", x: cu.t_ms.map(() => cu.x), y: cu.t_ms.map(() => cu.y), z: cu.t_ms.map((t) => cu.x.map(() => -Yv(t))), surfacecolor: cu.amp.map((r) => r.map(real)), cmin: -zm, cmax: zm, colorscale: cs3, ...see, showscale: false, opacity: IN.clear || IN.mode === nm ? 1 : 0.72, name: nm, lighting: { ambient: 1, diffuse: 0 }, hovertemplate: `${nm} ${cu.index}<br>${IN.depth ? "depth" : "time"} %{z:.0f}<br>amplitude %{surfacecolor:.0f}<extra></extra>` }));
-      const tz = -Yv(tsl.t_ms); pl.push({ type: "surface", x: tsl.x, y: tsl.y, z: tsl.x.map((r) => r.map((v) => (v == null ? null : tz))), surfacecolor: tsl.amp.map((r) => r.map(real)), cmin: -zm, cmax: zm, colorscale: cs3, ...see, showscale: false, opacity: IN.clear || IN.mode === "time" ? 1 : 0.72, name: "time slice", lighting: { ambient: 1, diffuse: 0 }, hovertemplate: `time slice ${Math.round(tsl.t_ms)} ms<br>amplitude %{surfacecolor:.0f}<extra></extra>` });
-      const ring = [...m.footprint, m.footprint[0]].map((p) => [KMX(p[1]), KMY(p[0])]), ox = [], oy = [], oz = [];
-      [zt, zb].forEach((z) => ring.forEach(([x, y]) => { ox.push(x); oy.push(y); oz.push(z); })); ox.push(null); oy.push(null); oz.push(null); ring.slice(0, -1).forEach(([x, y]) => { ox.push(x, x, null); oy.push(y, y, null); oz.push(zt, zb, null); });
-      pl.push({ type: "scatter3d", mode: "lines", x: ox, y: oy, z: oz, line: { color: css("--ink"), width: 2 }, hoverinfo: "skip", name: "survey box", showlegend: false });
-      if (en) {
-        [[en[0], inl, "xl"], [en[1], xln, "il"]].forEach(([E, cu, key]) => E.horizons.forEach((h, i) => { const pos = new Map(cu[key].map((v, j) => [v, j]));
-          const hx = [], hy = [], hz = []; h.along.forEach((a, j) => { const q = pos.get(a); if (q == null || h.twt[j] == null) { hx.push(null); hy.push(null); hz.push(null); } else { hx.push(cu.x[q]); hy.push(cu.y[q]); hz.push(-Yv(h.twt[j])); } });
-          pl.push({ type: "scatter3d", mode: "lines", x: hx, y: hy, z: hz, line: { color: HC[i % HC.length], width: 5 }, name: h.name, hovertemplate: `${esc(h.name)}<extra>interpreted horizon</extra>`, showlegend: false }); }));
-        en[0].wells.filter((w) => w.gr).forEach((w) => pl.push({ type: "scatter3d", mode: "lines", x: w.gr.twt.map(() => w.x), y: w.gr.twt.map(() => w.y), z: w.gr.twt.map((t) => -Yv(t)), line: { width: 10, color: w.gr.v, cmin: 0, cmax: 150, colorscale: [[0, "#f2d74e"], [0.5, "#8c9a4b"], [1, "#5b3a1a"]] }, customdata: w.gr.v, hovertemplate: `${esc(w.name)} gamma ray %{customdata:.0f} gAPI<extra>${esc(w.log_source)}</extra>`, showlegend: false }));
-      }
-      IN.wells.forEach((w) => pl.push({ type: "scatter3d", mode: "lines+text", x: [w.x, w.x], y: [w.y, w.y], z: [zt, zb], text: [w.name, ""], textposition: "top center", line: { color: WELLC, width: 9 }, textfont: { color: WELLC, size: 13 }, hovertemplate: `Well ${esc(w.name)}<extra></extra>`, showlegend: false }));
-      const xs3 = ring.map((r) => r[0]), ys3 = ring.map((r) => r[1]), dx = Math.max(...xs3) - Math.min(...xs3) || 1, dy = Math.max(...ys3) - Math.min(...ys3) || 1, step = (IN.depth ? 1000 : 1000), ticks = Array.from({ length: Math.floor(Yv(tmax) / step) + 1 }, (_, i) => i * step);
-      const ax = (t) => ({ title: t, gridcolor: css("--rule"), color: css("--mut"), showbackground: false });
-      if (IN.lay === "block") { await blockDraw(m, en); return; }
-      // keep the cube's camera across redraws (slider moves, gain, enrich): read it back from the live scene, as in the big scene
-      let cam3 = null; if ($("#si3d")?.data?.[0]?.type === "surface") try { cam3 = $("#si3d")._fullLayout.scene._scene.getCamera(); } catch {}
-      if (cam3) IN.cam = cam3;
-      const g3 = $("#si3d"); if (!g3 || !IN.el) return; if (g3.offsetWidth) await plot3(g3, pl, { margin: { l: 0, r: 0, t: 0, b: 0 }, uirevision: sv.id + IN.depth, showlegend: false, scene: { aspectmode: "manual", aspectratio: { x: 1, y: Math.max(dy / dx, 0.2), z: 0.55 }, camera: IN.cam || { eye: { x: 1.5, y: -1.6, z: 0.9 } }, xaxis: ax("East (km)"), yaxis: ax("North (km)"), zaxis: { ...ax(Ylab()), tickvals: ticks.map((v) => -v), ticktext: ticks.map(String) } } });
-      const enInfo = en ? `<tr><td>Enriched<td>${en[0].horizon_source ? esc(en[0].horizon_source) + " (coloured lines); " : "no interpreted horizons for this survey; "}gamma ray: ${en[0].wells.filter((w) => w.gr).map((w) => esc(w.name) + " (" + esc(w.log_source) + ")").join(", ") || "none"}; formation tops: Sodir. Depth to time: ${esc((en[0].time_model || []).join("; "))}. Purple wiggle: gamma ray (left = low, sand-like; right = high, shale-like).` : "";
-      $("#siinfo").innerHTML = `<table style="font-size:12px">${enInfo}<tr><td>Survey<td><b>${esc(m.name)}</b>${m.survey_year ? ` (surveyed ${m.survey_year}, processed ${"20" + m.processing})` : ""}<tr><td>Traces<td>${m.traces_total.toLocaleString()} in the survey, every ${m.decimation}th inline and crossline shown (${m.traces_kept.toLocaleString()})<tr><td>Sampling<td>${m.dt_ms} ms, ${Math.round(m.t0_ms)} to ${Math.round(m.t_end_ms)} ms two-way time<tr><td>Lines<td>inline ${m.inline[0]}–${m.inline[1]}, crossline ${m.crossline[0]}–${m.crossline[1]}${m.bin_m ? `, trace spacing about ${Math.round(m.bin_m)} m` : ""}<tr><td>Amplitude<td>99th percentile ${p99.toFixed(0)}; colours span ±${zm.toFixed(0)}${sv.base ? "; <b>difference</b> against " + esc(sv.base) : ""}<tr><td>Our wells<td>${IN.wells.length ? IN.wells.map((w) => esc(w.name) + " (" + w.dist_m + " m from a trace)").join(", ") : "none inside this survey"}<tr><td>Credit<td>${esc(m.credit)}</table>`;
-    }
-    // ---- the whole survey as one transparent volume (inline x crossline x time grid): strong reflections opaque, quiet zones see-through,
-    // so interpreted horizons, wells and gamma ray inside stay visible. Thinned on the server to about 350,000 values.
-    async function blockDraw(m, en) {
-      const sv = st.sv, c = await icache(["cube", sv.id, IN.detail].join("|"), () => api("seismic/cube", { survey: sv.id, max_points: IN.detail })); const g = $("#si3d"); if (!g || !IN.el || !g.offsetWidth) return;
-      const ni = c.il.length, nj = c.xl.length, nk = c.t_ms.length, X = [], Y = [], Z = [], V = [];
-      for (let i = 0; i < ni; i++) for (let j = 0; j < nj; j++) for (let k = 0; k < nk; k++) { X.push(c.xl[j]); Y.push(c.il[i]); Z.push(-Yv(c.t_ms[k])); V.push(c.amp[(i * nj + j) * nk + k]); }
-      const lim = 127 / IN.gain, cs3 = CM[IN.cmap], HC = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666"];
-      const pl = [{ type: "volume", x: X, y: Y, z: Z, value: V, isomin: -lim, isomax: lim, cmin: -lim, cmax: lim, colorscale: cs3, opacity: 0.25, surface: { count: 14 }, caps: { x: { show: false }, y: { show: false }, z: { show: false } },
-        opacityscale: [[0, 1], [0.3, 0.5], [0.45, 0], [0.55, 0], [0.7, 0.5], [1, 1]], showscale: false, hovertemplate: "inline %{y}, crossline %{x}<br>%{z:.0f}<extra>amplitude</extra>" }];
-      c.horizons.forEach((h, i) => pl.push({ type: "surface", x: c.xl, y: c.il, z: h.twt.map((r) => r.map((t) => (t == null ? null : -Yv(t)))), surfacecolor: h.twt.map((r) => r.map(() => 1)), colorscale: [[0, HC[i % HC.length]], [1, HC[i % HC.length]]], showscale: false, opacity: 0.55, name: h.name, hovertemplate: `${esc(h.name)}<br>inline %{y}, crossline %{x}<extra>interpreted horizon</extra>`, lighting: { ambient: 0.8, diffuse: 0.3 } }));
-      const t0 = -Yv(c.t_ms[0]), t1 = -Yv(c.t_ms.at(-1));
-      IN.wells.forEach((w) => pl.push({ type: "scatter3d", mode: "lines+text", x: [w.xl, w.xl], y: [w.il, w.il], z: [t0, t1], text: [w.name, ""], textposition: "top center", line: { color: WELLC, width: 9 }, textfont: { color: WELLC, size: 13 }, hovertemplate: `Well ${esc(w.name)}<extra></extra>`, showlegend: false }));
-      if (en) en[0].wells.filter((w) => w.gr).forEach((w) => pl.push({ type: "scatter3d", mode: "lines", x: w.gr.twt.map(() => w.xl), y: w.gr.twt.map(() => w.il), z: w.gr.twt.map((t) => -Yv(t)), line: { width: 14, color: w.gr.v, cmin: 0, cmax: 150, colorscale: [[0, "#f2d74e"], [0.5, "#8c9a4b"], [1, "#5b3a1a"]] }, customdata: w.gr.v, hovertemplate: `${esc(w.name)} gamma ray %{customdata:.0f} gAPI<extra></extra>`, showlegend: false }));
-      if (g.data?.[0]?.type === "volume") try { IN.blockCam = g._fullLayout.scene._scene.getCamera(); } catch {}  // only a block scene's camera is a block camera
-      const ax = (t) => ({ title: t, gridcolor: css("--rule"), color: css("--mut"), showbackground: false }), ticks = Array.from({ length: Math.floor(Yv(c.t_ms.at(-1)) / 1000) + 1 }, (_, i) => i * 1000);
-      await plot3(g, pl, { margin: { l: 0, r: 0, t: 0, b: 0 }, uirevision: "block" + sv.id, showlegend: false, scene: { aspectmode: "manual", aspectratio: { x: 1, y: Math.max(c.along_inline_axis_km / Math.max(c.along_crossline_axis_km, 0.1), 0.15), z: 0.6 }, camera: IN.blockCam || { eye: { x: 1.6, y: -1.6, z: 0.9 } },
-        xaxis: ax("Crossline"), yaxis: ax("Inline"), zaxis: { ...ax(Ylab()), tickvals: ticks.map((v) => -v), ticktext: ticks.map(String) } } });
-      $("#si-title").textContent = `${m.name}: full block (every ${c.stride.inline}th kept line, ${c.stride.time * m.dt_ms} ms)`;
-      $("#siinfo").innerHTML = `<table style="font-size:12px"><tr><td>Block<td>${ni} inlines × ${nj} crosslines × ${nk} samples (${V.length.toLocaleString()} values), thinned from the decimated copy. Quiet amplitudes are transparent; the gain sets which reflections stay opaque.${c.horizons.length ? "<tr><td>Horizons<td>" + c.horizons.map((h) => esc(h.name)).join(", ") + " (Smeaheia key horizons 2010)" : ""}<tr><td>Credit<td>${esc(c.credit)}</table>`;
-    }
-    function inspectClose() { if (IN.el) { IN.el.remove(); IN.ctl && IN.ctl.remove(); IN.stage && IN.stage.remove(); IN.el = IN.stage = null; } const b = $("#sv-inspect"); if (b) { b.textContent = "Inspect seismic ▸"; b.classList.add("on"); } REDRAW.scene?.(); }
-    function inspectOpen() { if (!SV.length) return; if (!st.sv.id) { const sel = $("#sv-id"); sel.value = SV[0].id; sel.dispatchEvent(new Event("change", { bubbles: true })); }
-      IN.sid = ""; IN.ctl = sec("L", "inspc", "Seismic inspector: view", `<div class="row"><b id="si-mode-lab"></b></div>
-        <div class="row"><label class="chk"><input type="radio" name="si-mode" value="inline" checked> inline section</label><label class="chk"><input type="radio" name="si-mode" value="crossline"> crossline section</label><label class="chk"><input type="radio" name="si-mode" value="time"> time slice</label></div>
-        <div class="row"><label class="chk" style="width:100%">inline <input type="range" id="si-il" style="flex:1"> <span id="si-ilv" class="mono"></span></label></div>
-        <div class="row"><label class="chk" style="width:100%">crossline <input type="range" id="si-xl" style="flex:1"> <span id="si-xlv" class="mono"></span></label></div>
-        <div class="row"><label class="chk" style="width:100%">time <input type="range" id="si-t" style="flex:1"> <span id="si-tv" class="mono"></span></label></div>
-        <div class="row"><label class="chk" style="width:100%" title="Colours saturate at the 99th-percentile amplitude divided by the gain: higher gain shows weaker reflections">gain <input type="range" id="si-g" min="0.5" max="8" step="0.1" value="1" style="flex:1"> <span id="si-gv"></span></label></div>
-        <div class="row"><label>Colours <select id="si-cm"><option value="seis">blue–white–red</option><option value="gray">grey</option></select></label><label class="chk" title="Make near-zero amplitudes transparent, in the inspector and in the big scene"><input type="checkbox" id="si-clear"> see-through quiet zones</label></div>
-        <div class="row"><label class="chk"><input type="checkbox" id="si-d"> depth (illustrative)</label></div>
-        <div class="row"><label title="Full block only: values sent to the browser; more is smoother and needs a stronger graphics card">Block detail <select id="si-det"><option value="350000">normal (350 k)</option><option value="900000">high (900 k)</option><option value="1800000">very high (1.8 M)</option></select></label></div>
-        <div class="row"><label class="chk" title="Overlay what else we know: interpreted horizons (Smeaheia), gamma-ray logs and formation tops of the wells in this survey"><input type="checkbox" id="si-en"> enrich: horizons, gamma ray, formation tops</label></div>`, true);
-      IN.el = sec("R", "insp", "Seismic inspector: survey", `<div id="siinfo"></div>`, true);
-      IN.stage = document.createElement("div"); IN.stage.className = "istage"; IN.stage.innerHTML = `<div class="ibar"><b id="si-title"></b>
-        <span class="tip">view</span>${[["only2d", "2D section"], ["only3d", "3D cube"], ["block", "full block"]].map(([k, t]) => `<button class="lnk lay ${IN.lay === k ? "on" : ""}" data-lay="${k}">${t}</button>`).join("")}<span style="flex:1"></span><button class="btn" id="si-close" title="Close the inspector and return to the 3D scene">✕ 3D scene</button></div>
-        <div id="sihov" class="tip ihov">hover the section for values</div>
-        <div class="igrid ${IN.lay}"><div id="si2d"></div><div id="si3d"></div></div>`;
-      $(".plotwrap").appendChild(IN.stage);
-      $("#si-close").onclick = () => inspectClose();
-      IN.stage.querySelector(".ibar").addEventListener("click", (e) => { const k = e.target.dataset.lay; if (!k) return; IN.lay = k; $(".igrid", IN.stage).className = "igrid " + k; IN.stage.querySelectorAll(".lay").forEach((b) => b.classList.toggle("on", b.dataset.lay === k)); try { const g = $("#si3d"); if (g.data?.[0]?.type === "surface") IN.cam = g._fullLayout.scene._scene.getCamera(); if (g.data?.[0]?.type === "volume") IN.blockCam = g._fullLayout.scene._scene.getCamera(); Plotly.purge(g); } catch {} inspectLater(); });
-      const b = $("#sv-inspect"); b.textContent = "Close inspector ◂"; b.classList.remove("on");
-      const body = $(".secb", IN.ctl), sync = () => { const sv = st.sv, L = LN[sv.id]; if (!L) return; sv.axis = IN.mode === "crossline" ? "crossline" : "inline"; const arr = L[sv.axis], v = sv.axis === "inline" ? IN.il : IN.xl; sv.pos = arr.length > 1 ? nearIdx(arr, v) / (arr.length - 1) : 0.5; sv.ck = ""; $$("[name='sv-ax']").forEach((r) => (r.checked = r.value === sv.axis)); later(); };
-      body.oninput = (e) => { const t = e.target, L = LN[st.sv.id]; if (!L) return; if (t.id === "si-il") IN.il = L.inline[+t.value]; else if (t.id === "si-xl") IN.xl = L.crossline[+t.value]; else if (t.id === "si-t") IN.t = +t.value; else if (t.id === "si-g") IN.gain = +t.value; else return; if (t.id === "si-il" || t.id === "si-xl") sync(); inspectLater(); };
-      body.onchange = (e) => { const t = e.target; if (t.name === "si-mode") { IN.mode = t.value; if (t.value !== "time") sync(); inspectLater(); } else if (t.id === "si-cm") { IN.cmap = t.value; inspectLater(); } else if (t.id === "si-d") { IN.depth = t.checked; inspectLater(); } else if (t.id === "si-clear") { IN.clear = t.checked; inspectLater(); later(); } else if (t.id === "si-en") { IN.enrich = t.checked; inspectLater(); } else if (t.id === "si-det") { IN.detail = +t.value; inspectLater(); } };
-      new ResizeObserver(() => { try { Plotly.Plots.resize($("#si2d")); } catch {} inspectLater(); }).observe(IN.stage);
-      inspectLater(); }
-    if ($("#sv-inspect")) { $("#sv-inspect").onclick = () => (IN.el ? inspectClose() : inspectOpen()); ["#sv-id", "#sv-base"].forEach((id) => $(id).addEventListener("change", () => IN.el && inspectLater())); $("#sv-v").addEventListener("input", () => IN.el && IN.depth && inspectLater()); }
-    const mini = () => { const [a, b] = st.reg.split(",").map(Number); minimap($(".plotwrap"), { lat: [Math.max(a, 56), Math.min(b, 72)], lon: [0, 31] }, `In view: ${regions[st.reg]} (${a}–${b}°N)`); };
-    await draw(); job(); mini(); $("#reg").addEventListener("change", mini);
+    const { IN, OPQ, inspectOpen, inspectClose, inspectLater } = seismicKit({ SV, LN, get sv() { return st.sv; }, later });
+    // the box is the scene's real extent (its x and y axes, in the KMX/KMY frame), not the whole latitude band of the region
+    const mini = () => { const d = st._d; if (!d) return; const lon = (x) => x / (111.32 * Math.cos((61 * Math.PI) / 180)) + 3, lat = (y) => y / 110.57 + 61, f = (v) => v.toFixed(1);
+      minimap($(".plotwrap"), { lat: [lat(d.y0), lat(d.y1)], lon: [lon(d.x0), lon(d.x1)] }, `In view: ${regions[st.reg]}, ${f(lat(d.y0))}–${f(lat(d.y1))}°N, ${f(lon(d.x0))}–${f(lon(d.x1))}°E`); };
+    st.mini = mini; await draw(); job();
   },
 
   async units() {

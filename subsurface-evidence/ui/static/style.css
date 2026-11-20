@@ -112,3 +112,11 @@ button.btn{padding:4px 12px}
 .subnav{display:flex;gap:16px;font-size:13px;border-bottom:1px solid var(--rule);margin:0 0 14px;padding-bottom:6px}.subnav a{color:var(--mut);text-decoration:none}.subnav a.on{color:var(--ink);font-weight:600}
 .istage{position:absolute;inset:0;z-index:6;background:var(--paper);display:flex;flex-direction:column}.ibar{display:flex;gap:10px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--rule);font-size:13px;flex-wrap:wrap}.ibar .lay.on{font-weight:600;text-decoration:none;color:var(--ink)}.ihov{padding:2px 10px;min-height:1.4em;font-size:12px}.igrid{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:6px;min-height:0}.igrid.only2d,.igrid.only3d,.igrid.block{grid-template-columns:1fr}.igrid.only2d #si3d,.igrid.only3d #si2d,.igrid.block #si2d{display:none}.igrid>div{min-width:0;min-height:0;border:1px solid var(--rule);border-radius:var(--rp)}
 .minimap{position:absolute;left:10px;top:10px;z-index:4;background:var(--paper);border:1px solid var(--rule);border-radius:var(--rp);padding:4px 6px;opacity:0.92;font-size:11px;max-width:200px}
+/* layer swatches and hover pick-out (P10) */
+.sw{display:inline-block;width:11px;height:11px;border-radius:2px;flex:none;border:1px solid var(--rule)}
+.sw.line{height:3px;border:0;width:14px}
+.sw.text{width:auto;height:auto;border:0;font-size:10px;font-weight:600;background:none}
+label.lay{display:flex;padding:1px 3px;border-radius:4px}
+label.lay:hover{background:var(--faint)}
+.row.presets{flex-wrap:wrap;gap:4px}
+.row.presets .btn{font-size:12px;padding:2px 8px}

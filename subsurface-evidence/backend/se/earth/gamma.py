@@ -14,6 +14,7 @@ from sklearn.model_selection import GroupKFold
 
 from se.config import EARTH
 from se.earth import manifest
+from se.earth.folds import blocks
 
 ELL, K = 20.0, 3.0
 
@@ -42,7 +43,10 @@ def estimate(tr: pd.DataFrame, q: pd.DataFrame) -> np.ndarray:
 
 def build() -> dict:
     g = well_units().reset_index(drop=True)
-    bl = (np.floor(g.x / 40).astype(int) * 100003 + np.floor(g.y / 40).astype(int)).to_numpy()
+    if len(g) < 20:
+        from se.earth.run import Skip
+        raise Skip(f"only {len(g)} FORCE well-units with gamma ray in this region")
+    bl = blocks(g.x, g.y)
     e_m, e_u, e_g = np.zeros(len(g)), np.zeros(len(g)), np.zeros(len(g))
     for tr, te in GroupKFold(5).split(g, groups=bl):
         a, b = g.iloc[tr], g.iloc[te]

@@ -132,9 +132,26 @@ def cv(s, wt, text, ell, K, text_w, folds=5):
             **{f"brier_{k}": round(v / n, 4) for k, v in brier.items()}}
 
 
+def from_text(text: pd.DataFrame) -> pd.DataFrame:
+    """Where no FORCE well exists (Norwegian Sea, Barents: P8), report-text rock words are the only lithology: clay -> shale, sand -> sandstone,
+    carbonate -> limestone, as counts per well and unit in the FORCE class columns. Weaker evidence (L063: it did not help where FORCE exists)."""
+    wt = pd.DataFrame({"wellbore": text.wellbore, "unit": text.unit, "x": text.x, "y": text.y})
+    for k in range(len(CODES)):
+        wt[k] = 0
+    for lith, k in TEXT_MAP.items():
+        if lith in text:
+            wt[k] = text[lith].to_numpy()
+    return wt[wt[list(range(len(CODES)))].sum(1) > 0]
+
+
 def build() -> dict:
-    s = samples(); wt = well_table(s)
-    text = text_counts()
+    s = samples(); text = text_counts()
+    if not len(s):
+        wt = from_text(text); wt.to_parquet(EARTH / "lithology_wells.parquet"); text.to_parquet(EARTH / "lithology_text.parquet")
+        out = {"source": "report text only (no FORCE wells in this region)", "well_units": int(len(wt)), "wells": int(wt.wellbore.nunique()), "units": int(wt.unit.nunique()),
+               "chosen": {"ell_km": 25.0, "K": 300.0, "text_w": 1.0}, "note": "not scored against FORCE labels: none here"}
+        (EARTH / "lithology_report.json").write_text(json.dumps(out, indent=1)); return out
+    wt = well_table(s)
     grid = []
     for ell in (10.0, 25.0, 60.0):
         for K in (50.0, 300.0, 2000.0):

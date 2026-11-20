@@ -48,8 +48,17 @@ def device() -> str:
         return "cpu"
 
 # Earth-model pilot (PLAN.md, LOG L053): Horda Platform / northern Viking Graben
-PILOT = {"lat": (59.5, 61.5), "lon": (1.5, 4.5)}
-EARTH = OUT / "earth" / "pilot"  # earth-model artefacts, never committed
+# Earth-model regions (PLAN P8). The pipeline runs for one region at a time: EARTH_REGION=<name>; artefacts in OUT/earth/<name>.
+# "PILOT" below is the active region's box (the code was written for the pilot; every module reads the box from here).
+REGIONS = {
+    "pilot": {"lat": (59.5, 61.5), "lon": (1.5, 4.5), "step_km": 2.0, "title": "Horda Platform, northern Viking Graben (pilot)"},
+    "north_sea_south": {"lat": (56.0, 59.5), "lon": (1.5, 7.5), "step_km": 3.0, "title": "Southern North Sea (Norwegian sector)"},
+    "norwegian_sea": {"lat": (62.0, 69.0), "lon": (2.0, 15.0), "step_km": 4.0, "title": "Norwegian Sea"},
+    "barents": {"lat": (69.5, 74.5), "lon": (15.0, 37.0), "step_km": 4.0, "title": "Barents Sea"},
+}
+REGION = os.environ.get("EARTH_REGION", "pilot")
+PILOT = REGIONS[REGION]
+EARTH = OUT / "earth" / REGION  # earth-model artefacts, never committed
 
 
 def in_pilot(lat, lon):

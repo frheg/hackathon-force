@@ -20,7 +20,7 @@ from se.config import BLOCK_KM, EARTH, PILOT, in_pilot
 from se.earth import manifest
 from se.earth.gp import GP, design
 
-STEP_KM = 2.0
+STEP_KM = PILOT.get("step_km", 2.0)  # 2 km in the pilot, coarser in the large regions (P8)
 QC: dict = {}
 Z90 = 1.645
 TO_3035 = Transformer.from_crs("EPSG:4230", "EPSG:3035", always_xy=True)

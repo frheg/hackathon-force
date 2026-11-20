@@ -16,7 +16,7 @@ function deskMarkdown(text, refs) {
     if (node.nodeType === Node.TEXT_NODE) {
       if (!cite) { parent.append(node.data); return; }
       let end = 0;
-      for (const match of node.data.matchAll(/\[((?:S\d+|F:[\w-]+))\]/g)) {
+      for (const match of node.data.matchAll(/\[((?:S\d+|F:[\w-]+|M:[\w.-]+))\]/g)) {
         parent.append(node.data.slice(end, match.index));
         const source = refs.get(match[1]), ref = document.createElement(source ? "button" : "span");
         ref.textContent = match[0];
@@ -60,7 +60,8 @@ function mountDesk(pane, readView) {
   };
   const sync = () => {
     const view = readView();
-    scope.textContent = view.interval ? `${view.target} · ${view.interval.wellbore} · ${view.interval.top_md.toFixed(0)}–${view.interval.base_md.toFixed(0)} m MD` : `${view.target} · ${view.region} · no interval selected`;
+    scope.textContent = view.view === "earth" ? `earth model · ${view.earth_target} · ${String(view.earth_region).replace(/_/g, " ")} · ${view.cell != null ? "cell " + view.cell : "no cell selected"}`
+      : view.interval ? `${view.target} · ${view.interval.wellbore} · ${view.interval.top_md.toFixed(0)}–${view.interval.base_md.toFixed(0)} m MD` : `${view.target} · ${view.region} · no interval selected`;
   };
   const draft = (q) => { if (!pending) { input.value = q; input.focus(); } };
   samples.onclick = (event) => {
@@ -125,7 +126,7 @@ function mountDesk(pane, readView) {
         $("summary", source).focus({ preventScroll: true });
       };
       lastScope = key;
-      history = [...prior, { question: q, answer: out.answer.slice(0, 900) }].slice(-2);
+      history = [...prior, { question: q, answer: out.answer.slice(0, 900) }].slice(-4);
       input.value = "";
       status.textContent = "";
     } catch (error) {

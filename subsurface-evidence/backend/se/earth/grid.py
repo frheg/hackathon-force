@@ -102,6 +102,20 @@ def cell(x_km: float, y_km: float, z: float) -> dict | None:
     return {"i": i, "j": j, "k": k, "zone": str(g["zones"][g["zone"][k]]), "group": gname, "formation": fname or None}
 
 
+def thickness_map(match) -> np.ndarray:
+    """(ny, nx) thickness in m of the grid labels for which match("GROUP|FORMATION") is true (0 where absent)."""
+    g = np.load(EARTH / "grid.npz"); dz = np.diff(g["zb"].astype(np.float64), axis=0)
+    ls = [li for li, s in enumerate(g["labels"]) if match(str(s))]
+    return (dz * np.isin(g["label"], ls)).sum(0) if ls else np.zeros(g["zb"].shape[1:])
+
+
+def at_columns(field: np.ndarray, x_km, y_km) -> np.ndarray:
+    """A (ny, nx) column field at points (3035 km), nearest column."""
+    g = np.load(EARTH / "grid.npz")
+    i = np.abs(g["x"][None] - np.ravel(x_km)[:, None]).argmin(1); j = np.abs(g["y"][None] - np.ravel(y_km)[:, None]).argmin(1)
+    return field[j, i].reshape(np.shape(x_km))
+
+
 if __name__ == "__main__":
     o = build()
     print({k: v for k, v in o.items() if k != "volume_km3"})

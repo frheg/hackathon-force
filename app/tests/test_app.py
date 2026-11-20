@@ -408,3 +408,24 @@ def test_greenclay_each_sentence_gets_its_own_interval():
 
     got, _ = extract_page("Balder Formation (2394 - 2459 m MD): bluish grey tuff. Sele Formation (2459 - 2527 m MD): olive green claystone, glauconitic.")
     assert {(g["depth_from"], g["depth_to"], g["formation"]) for g in got} == {(2459.0, 2527.0, "Sele Formation")}
+
+
+def test_strata_earth_view_gets_model_evidence(monkeypatch):
+    """P10: on the earth model page the assistant receives the model's method, the cell and the tested rules as [M:...] excerpts."""
+    from sketches import earthctx
+
+    if not (earthctx.EARTH / "pilot" / "targets" / "report.json").exists():
+        import pytest
+
+        pytest.skip("earth model not built here")
+
+    async def fake_chat(messages, **kw):
+        assert "assistant to a geologist" in messages[0]["content"] and "[M:" in messages[1]["content"]
+        return "The model publishes a probability [M:method-hydrocarbons]."
+
+    monkeypatch.setattr(strata, "chat", fake_chat)
+    scene = {"target": "hydrocarbons", "view": "earth", "earth_region": "pilot", "earth_target": "hydrocarbons", "cell": 10}
+    r = client.post("/detective/api/strata/ask", json={"q": "Why is this cell likely or not, and what should I check?", "scene": scene})
+    assert r.status_code == 200, r.text
+    refs = [s["ref"] for s in r.json()["sources"]]
+    assert "M:method-hydrocarbons" in refs and "M:cell" in refs and any(x.startswith("M:R-") for x in refs)

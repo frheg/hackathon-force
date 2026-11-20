@@ -155,7 +155,7 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     $("#c-res").value = "0.05"; fire($("#c-res"), "change"); await waitFor(() => cells() > c0 * 2, 60000); ok("fine estimate detail gives a much finer grid", cells() > c0 * 2, `${c0} -> ${cells()} cells`);
     $("#c-res").value = "0.15"; fire($("#c-res"), "change"); await sleep(1500);
     $("#v-top").click(); await sleep(800); const eyeTop = $("#p3")._fullLayout.scene.camera.eye; ok("top view looks straight down", eyeTop.z > 2 && Math.abs(eyeTop.x) < 0.1, JSON.stringify(eyeTop));
-    F().location.hash = "map"; ok("old #map address lands on the 3D page", !!(await waitFor(() => F().location.hash === "#scene" && $("#p3"), 30000)));
+    F().location.hash = "map"; ok("old #map address lands on the subsurface model", !!(await waitFor(() => F().location.hash === "#earth" && $("#pe"), 30000)));
     ok("the Map page is gone from the menu", ![...D().querySelectorAll("#links a")].some((a) => a.textContent === "Map"));
     // --- seismic inspector (side pane: 2D view and 3D cube)
     F().location.hash = "scene"; await waitFor(() => $("#sv-id") && $("#p3") && $("#p3").data && $("#p3").data.length > 3, 90000);
@@ -182,7 +182,7 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     $("#si-en").click(); await sleep(1500);
     $("#sv-inspect").click(); await sleep(500); ok("Close inspector removes both parts", !D().querySelector("#sec-insp") && !D().querySelector("#sec-inspc") && /Inspect seismic/.test($("#sv-inspect").textContent));
     // --- seven tabs; secondary pages under a sub-navigation; architecture charts with pan and zoom
-    ok("the header has eight tabs (Earth model first)", D().querySelectorAll("#links a").length === 8 && D().querySelector("#links a").dataset.p === "earth", [...D().querySelectorAll("#links a")].map((a) => a.textContent).join(", "));
+    ok("the header has seven tabs (Subsurface model first; the 3D views are merged)", D().querySelectorAll("#links a").length === 7 && D().querySelector("#links a").dataset.p === "earth", [...D().querySelectorAll("#links a")].map((a) => a.textContent).join(", "));
     F().location.hash = "layers"; await waitFor(() => D().querySelector(".subnav"), 30000);
     ok("Layers opens under Validation with its sub-navigation", D().querySelector("#links a.on")?.dataset.p === "validation" && D().querySelector(".subnav a.on")?.textContent === "Layers");
     F().location.hash = "architecture"; await waitFor(() => D().querySelectorAll(".pz svg").length === 2, 60000);
@@ -194,6 +194,24 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
       ok("clicking a cell shows its evidence chain (probability, range, support, nearest observations or terms)", !!(await waitFor(() => /support/.test($("#e-cb").textContent) && /range/.test($("#e-cb").textContent), 30000)), $("#e-cb").textContent.slice(0, 120)); }
     { const n0 = $("#e-n").textContent; $("#e-p").value = 0.9; fire($("#e-p"), "input"); await waitFor(() => $("#e-n").textContent !== n0, 30000); ok("a higher probability threshold shows fewer cells", parseInt($("#e-n").textContent.replace(/,/g, "")) < parseInt(n0.replace(/,/g, "")), n0 + " -> " + $("#e-n").textContent); }
     { $("#e-c").value = "gr"; fire($("#e-c"), "change"); ok("colour by gamma ray draws estimated GR with its held-out test", !!(await waitFor(() => $("#pe").data.some((d) => d.name === "gamma ray (estimated)") && /gAPI/.test($("#e-n").textContent), 60000)), $("#e-n").textContent.slice(0, 100)); }
+    // --- P9 factors
+    { $("#e-c").value = "lw"; fire($("#e-c"), "change"); ok("colour by old wells draws the legacy-well count per cell", !!(await waitFor(() => $("#pe").data.some((d) => d.name === "old wells through the unit") && /within 2 km/.test($("#e-n").textContent), 60000)), $("#e-n").textContent.slice(0, 100)); }
+    ok("oil and gas are separate targets", [...$("#e-t").options].some((o) => o.value === "oil") && [...$("#e-t").options].some((o) => o.value === "gas"));
+    ok("the page says probabilities are conditional on where wells are drilled", /where wells|drilled here/.test($("#e-ib").textContent), $("#e-ib").textContent.slice(-160));
+    ok("the skill table shows the forward-in-time test", /forward in time/.test($("#sec-e-skill")?.textContent || ""));
+    { $("#e-p").value = 0.5; fire($("#e-p"), "input"); $("#e-c").value = "p"; fire($("#e-c"), "change"); await waitFor(() => $("#pe").data.some((d) => d.type === "scatter3d" && d.customdata && d.marker?.colorscale === "Viridis"), 60000);
+      const g = $("#pe"), d = g.data.find((x) => x.type === "scatter3d" && x.customdata && typeof x.customdata[0][0] === "number"); g.emit("plotly_click", { points: [{ data: d, customdata: d.customdata[0] }] });
+      ok("the cell evidence lists the petroleum-system factors", !!(await waitFor(() => /mature source/.test($("#e-cb").textContent) && /mapped fault/.test($("#e-cb").textContent), 30000)), $("#e-cb").textContent.slice(-200)); }
+    // --- P10: merged model page
+    { ok("the model page has the seismic section and the inspector button", !!$("#sv-id") && !!$("#sv-inspect"));
+      ok("observed-in-wells layer is drawn", !!(await waitFor(() => $("#pe").data.some((d) => d.name === "observed in wells"), 60000)));
+      ok("map layers are drawn (coast, faults)", $("#pe").data.some((d) => d.meta?.hl === "map:faults") && $("#pe").data.some((d) => d.meta?.hl === "map:coast"));
+      ok("presets and the automatic threshold are there", $$("[data-pre]").length === 4 && !!$("#e-pa"));
+      const sel = $("#sv-id"); sel.value = sel.options[1]?.value || ""; fire(sel, "change");
+      ok("a seismic section is drawn in the model", !!(await waitFor(() => $("#pe").data.some((d) => d.type === "surface" && d.name === sel.value), 90000)));
+      $("#sv-inspect").click(); ok("the seismic inspector opens from the model page", !!(await waitFor(() => $("#si2d") || $("#siinfo"), 60000)));
+      $("#sv-inspect").click(); }
+    { F().location.hash = "earth/all"; ok("all regions side by side", !!(await waitFor(() => $("#pe") && $("#pe").data && $("#pe").data.some((d) => d.type === "scatter3d" && d.customdata) && /All \d regions/.test($(".minimap")?.textContent || ""), 180000))); }
   } catch (e) { R.push("ERROR " + e); }
   document.getElementById("out").textContent = R.join("\n") + "\nDONE";
 })();

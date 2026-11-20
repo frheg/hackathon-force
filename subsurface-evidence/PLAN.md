@@ -64,7 +64,7 @@ api + 3D     cells, isosurfaces, evidence chain per cell                   se/ap
 Status: `[ ]` open, `[~]` in progress, `[x]` done (with LOG id). Do phases in order; tasks inside a phase can run in parallel unless marked.
 
 ### P0 Housekeeping
-- [~] **P0.1** Commit GPT-6.2's work (owner commits; pending). Browser test fixed (L054): 79 checks pass.
+- [x] **P0.1** Commit GPT-6.2's work (owner committed: hackathon-force 69d602d, homelab dae501a; L073). Browser test fixed (L054): 79 checks pass.
 - [x] **P0.2** Restart the pod backend so it serves the corrected 2,286-unit artefacts (L047, L051). Verified in the pod: 2,286 units, 27,025 rows (L054).
 - [x] **P0.3** Add `PILOT` to `se/config.py`; helper `in_pilot(lat, lon)`; test. (L055)
 
@@ -123,7 +123,36 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done (with LOG id). Do phases in or
 - [x] **P7.3 Tests.** (L071) Backend tests per module; browser checks in `ui/static/selftest.html` (unique variable names).
 
 ### P8 Scale
-- [ ] **P8.1** Repeat P1–P6 per region (North Sea south, Norwegian Sea, Barents); compare skill per region; never pool validation across regions without saying so.
+- [x] **P8.1** (L074) Repeat P1–P6 per region (North Sea south, Norwegian Sea, Barents); compare skill per region; never pool validation across regions without saying so.
+
+### P9 Missing factors (owner, 2026-11-20)
+Each factor is a rule in `earth.yaml` with a data test, and enters a model only if it beats the model without it on held-out wells (all four regions).
+- [x] **P9.1 Source maturity (charge).** (L075) Depth and temperature of the source rocks (Draupne, Spekk, Hekkingen, Mandal, Tau) per column; share in the oil or gas window (T >= 100 C); distance from each cell to the nearest mature source. Feature for hydrocarbons.
+- [x] **P9.2 Burial and quartz cement (reservoir).** (L075) Temperature above 70 C as a porosity driver (Walderhaug 1996); per-well net exhumation from the porosity-depth offset, mapped between wells, as effective burial. Compare held-out porosity error.
+- [x] **P9.3 Old wells through the seal (CO2).** (L075) Count of wellbores penetrating each cell's unit within 2 km; a layer and part of the CO2 evidence.
+- [x] **P9.4 Seabed temperature by water depth.** (L075) Replace the fixed 7 C (shallow cells only) by a water-depth relation.
+- [x] **P9.5 Traps.** (L075) Distance to the nearest mapped fault (Sodir FactMaps, `data/sodir/factmaps`) and closure height on the unit's top surface (spill analysis). Features for hydrocarbons.
+- [ ] **P9.6 Volve.** (L075: blocked, needs the owner: Databricks Marketplace account and the Equinor Open Data Licence) Second seismic tie in North Sea south from the Equinor Volve release (licence is the owner's decision).
+- [x] **P9.7 Salt.** (L075) Zechstein thickness from the grid (North Sea south); test as a temperature and a hydrocarbon feature.
+- [x] **P9.8 Oil or gas.** (L075) Split hydrocarbons into oil and gas targets (FactPages well content, DST rates).
+- [x] **P9.9 Drilling bias.** (L075) State in the UI and report that probabilities are conditional on where wells are drilled.
+- [x] **P9.10 Test forward in time.** (L075) Train on wells completed before 2005, test on later wells; per target and region.
+- [x] **P9.11 Leakage guard.** (L075) Discovery and field outlines never enter features; a test enforces it.
+
+### P10 Learn from Petrel, RMS, PetroMod, Trinity (owner, 2026-11-20)
+- [x] **P10.1 Code review.** (L076) Read the earth modules for logic, architecture and speed; fix what is wrong; log what was found.
+- [x] **P10.2 Fill-and-spill migration.** (L076) Per unit top: priority-flood drainage tree, oil from mature kitchen columns follows it up-dip, fills closures and spills on; charge reaching each cell (present and maximum burial). Candidate feature; must pass the held-out and forward-in-time tests.
+- [x] **P10.3 Correlated realisations.** (L076) Monte Carlo draws as spatially correlated Gaussian fields (correlation length per input), not independent per cell; GPU (torch FFT) when free.
+- [x] **P10.4 Porosity and CO2 capacity.** (L076) Porosity per cell (adopted P3.2 model); capacity = cell volume x sand share x porosity x CO2 density (NIST Span-Wagner table at the cell's T and P) x storage efficiency (NETL P10/P50/P90), summed per unit per realisation. Check against the Sodir CO2 Storage Atlas (`data/sodir/co2_atlas`).
+- [x] **P10.5 Chance of success.** (L076) P(reservoir) x P(seal) x P(charge) x P(trap) per cell, the limiting element, and a held-out check against hydrocarbons; shown on the Earth page.
+- [x] **P10.6 Other model families.** (L076) Logistic vs gradient boosting vs spline logistic (GAM-like) on the same folds and the forward-in-time test; a family is used only if it wins on both.
+- [x] **P10.7 Export.** (L076) Surfaces as IRAP classic ASCII and ZMAP+; a zone-level corner-point grid (GRDECL) with target probabilities as properties; download from the API.
+- [x] **P10.8 Docs.** (L076) Architecture notes and charts (docs/architecture.md, the Architecture page) updated for P9 and P10.
+- [x] **P10.9 Depth without TVD.** (L076) Owner question (25/1-14 G drawn 10 km deep): 1,032 wellbores have no TVD in FactPages; sidetracks take their parent's TVD (median difference -58 m over 1,798 pairs), others the TVD/MD ratio of their class; sigma from the calibration spread. All regions rebuilt.
+- [x] **P10.10 Strata Desk as an assistant.** (L076) The assistant reads the model's own evidence (method and skill, the selected cell, tested rules, a named well's depth source, a named unit's observations) and answers in sections: sources, model, reasoning with assumptions, uncertainty, checks. Works on the model page (scene accepted).
+- [x] **P10.11 One subsurface model page.** (L076) Earth model and 3D merged as "Subsurface model": seismic sections and the inspector, tied horizons, what each well found at vertical depth, formation tops, map layers, all regions side by side, presets and remembered settings. The Target builder's saved-target sheets stay as a sub-view (depth along the hole).
+- [ ] **P10.12 Saved targets at vertical depth.** Convert the saved-target sheets and sticks to TVDSS with the frame, then fold them into the model page as a layer and retire the sub-view.
+- [ ] **P10.13 Cleaner filters on the other pages.** The model page sidebar is revamped (sections, descriptions, swatches, presets); Targets, Units and Validation still have their older controls.
 
 ## 5. Done for the pilot
 

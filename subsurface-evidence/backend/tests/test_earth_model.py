@@ -92,3 +92,97 @@ def test_earth_api_cell_evidence():
     assert {"unit", "p", "p05", "p95", "support", "nearest_observations", "rules"} <= set(c)
     t = earth.target("reservoir", pmin=0.8, limit=50)
     assert t["shown"] <= 50 and all(p >= 0.8 for p in t["p"])
+
+
+# ---------------------------------------------------------------- P9 (LOG L075)
+def test_closure_finds_a_dome_and_nothing_on_a_plane():
+    from se.earth.factors import closure
+
+    y, x = np.mgrid[0:41, 0:41].astype(float)
+    dome = 2000 - 60 * np.exp(-((x - 20) ** 2 + (y - 20) ** 2) / 40) + 2 * x  # a dome on a gentle dip (depth, positive down)
+    c = closure(dome)
+    assert c[20, 20] > 30 and c[0].max() == 0 and c[:, 0].max() == 0
+    assert closure(2000 + 2 * x).max() == 0
+    gap = dome.copy(); gap[18:23, 18:23] = np.nan  # an absent unit is not a closure
+    assert np.all(closure(gap)[18:23, 18:23] == 0)
+
+
+def test_burial_map_shrinks_to_zero_far_from_wells():
+    from se.earth.poroperm import burial_map
+
+    tr = pd.DataFrame({"wellbore": ["a", "a", "b"], "x": [0.0, 0.0, 5.0], "y": 0.0, "E_own": [1500.0, 1700.0, 1600.0]})
+    near, far = burial_map(tr, [1.0, 2000.0], [0.0, 0.0])
+    assert 500 < near < 1700 and abs(far) < 1  # K_E pseudo-wells at 0: two wells give about 45 percent of their value
+    assert burial_map(tr, [0.0], [0.0], exclude=["a"])[0] < near  # own well left out
+
+
+@pytest.mark.skipif(not (__import__("se.config", fromlist=["DATA"]).DATA / "woa23" / "t00an01.csv.gz").exists(), reason="WOA23 not downloaded")
+def test_seabed_temperature_is_cold_in_the_deep_norwegian_sea():
+    from se.earth.seabed import bottom_temperature
+    from se.evidence.spatial import project
+
+    p = project([3.0, 4.0], [60.0, 66.5])
+    t = bottom_temperature(p[:, 0], p[:, 1], [120.0, 1500.0])
+    assert 5 < t[0] < 10 and t[1] < 1
+
+
+def test_features_never_read_discovery_or_field_outlines():
+    """P9.11: discoveries and fields are partly the same facts as our labels; no feature module may read them."""
+    import re
+    from pathlib import Path
+
+    from se.earth import targets
+
+    bad = re.compile(r"\b(from|join)\s+(discovery|field)\w*|discovery\w*\.(csv|parquet|geojson)|field\w*\.(csv|parquet|geojson)|dscName|fldName|wlbDiscovery|wlbField", re.I)
+    for m in ("factors", "targets", "poroperm", "temperature", "seabed", "lithology", "gamma"):
+        src = (Path(targets.__file__).parent / f"{m}.py").read_text()
+        assert not bad.search(src), f"{m}.py reads discovery or field data"
+    feats = {f for v in targets.FEATS.values() for f in v} | {f for v in targets.CAND.values() for f in v}
+    assert not any(k in f for f in feats for k in ("disc", "field", "fld"))
+
+
+# ---------------------------------------------------------------- P10 (LOG L076)
+def test_fill_and_spill_sends_kitchen_oil_into_the_dome():
+    from se.earth.factors import migrate
+
+    y, x = np.mgrid[0:41, 0:41].astype(float)
+    top = 2000 - 60 * np.exp(-((x - 20) ** 2 + (y - 20) ** 2) / 40) + 2 * x  # dome on a gentle dip down to the east (deeper = larger x)
+    kitchen = ((x > 34) & (abs(y - 20) < 4)).astype(float)  # a mature source in the deep east, in line with the dome
+    clos, chg, pc = migrate(top, kitchen, 4.0)
+    assert clos[20, 20] > 20 and chg[20, 20] > 0 and pc[20, 20] > 0.99  # oil from the east reaches the crest
+    assert chg[2, 20] == 0 and pc[2, 20] < 0.01  # off the flow path (far north of the dome and the kitchen): nothing arrives
+    assert np.all(chg[clos > 1] == chg[20, 20])  # a closure holds what passes its spill point, everywhere inside it
+
+
+def test_monte_carlo_keeps_rare_rates_rare():
+    """P10.1 bug: normal noise on the logit pulled rare targets towards 0.5; beta draws keep the mean near the rate."""
+    from se.earth.targets import Model, monte_carlo
+
+    rng = np.random.default_rng(0); n = 400
+    F = pd.DataFrame({"prior": np.full(n, 0.01), "nb": np.full(n, 0.01), "n_unit": np.full(n, 2.0), "n_nb": np.full(n, 1.0), "zb_km": rng.uniform(1, 3, n)})
+    F["lp"], F["lnb"] = np.log(0.01 / 0.99), np.log(0.01 / 0.99)
+    y = (rng.random(n) < 0.01).astype(float); y[:4] = 1
+    m = Model(["lp", "lnb", "zb_km"]).fit(F.assign(lp=F.lp + rng.normal(0, 1, n)), y, np.ones(n))
+    mean, lo, hi = monte_carlo(m, F, None, n=60)
+    assert mean.mean() < 0.1 and (lo <= mean + 1e-9).all() and (mean <= hi + 1e-9).all()
+
+
+def test_sidetracks_get_their_parents_depth():
+    """Owner question (25/1-14 G, MD 10,444 m): a sidetrack without TVD takes its parent's TVD, not its measured length."""
+    from se.earth.frame import estimate_tvd
+
+    w = pd.DataFrame({"wellbore": ["9/1-1", "9/1-1 A", "9/2-1", "9/2-1 B", "8/1-1"], "kind": "exploration", "td": [2250.0, 10400.0, 3000.0, 3200.0, 2600.0],
+                      "tvd_td": [2250.0, np.nan, 2990.0, 2900.0, np.nan]})
+    e, cal = estimate_tvd(w)
+    e = e.set_index("wellbore")
+    assert e.loc["9/1-1 A", "tvd_how"] == "parent" and abs(e.loc["9/1-1 A", "tvd_est"] - 2250) < 500
+    assert e.loc["8/1-1", "tvd_how"] in ("class", "none") and e.loc["9/1-1", "tvd_how"] == "factpages"
+
+
+def test_export_formats_have_the_right_sizes():
+    from se.earth.export import _kw, irap, zmap
+
+    z = np.arange(12.0).reshape(3, 4); z[0, 0] = np.nan; x, y = np.arange(4) * 1000.0, np.arange(3) * 1000.0
+    ir = irap(z, x, y).split("\n"); assert ir[0] == "-996 3 1000.000000 1000.000000" and sum(len(l.split()) for l in ir[4:]) == 12 and "9999900.0000" in ir[4]
+    zm = zmap(z, x, y, "t"); body = zm.split("@\n")[-1]; assert len(body.split()) == 12 and "1.0E+30" in body
+    k = _kw("ACTNUM", np.ones(10, int), "{:d}"); assert k.startswith("ACTNUM\n") and k.strip().endswith("/") and len(k.split()) == 12

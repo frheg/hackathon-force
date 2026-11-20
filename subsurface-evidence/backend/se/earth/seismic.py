@@ -163,6 +163,10 @@ def build(xs=None, ys=None, step=None) -> dict:
     P = {s: read(s) for s in ["Seabed"] + list(HORIZONS)}
     kd = {s: cKDTree(p[:, :2]) for s, p in P.items()}
     T = ties(tops, wells, P, kd)
+    if len(T) < 6:  # outside the Smeaheia interpretation (P8 regions): nothing to tie, nothing adopted
+        out = {"source": "Smeaheia Key_Horizons_2010", "ties": int(len(T)), "adopted": [], "held_out": {}, "note": "no interpreted horizons at this region's wells"}
+        (EARTH / "seismic_report.json").write_text(json.dumps(out, indent=1))
+        return out, {}
     ev = evaluate(T, tops)
     vel = Velocity().fit(T.tsb.to_numpy(), T.wd.to_numpy(), T.t.to_numpy(), T.z.to_numpy(), T[["x", "y"]].to_numpy(), T["var"].to_numpy())
     lt = lattice_times(P, kd, xs, ys, step)

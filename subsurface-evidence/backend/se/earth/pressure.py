@@ -16,6 +16,7 @@ from sklearn.model_selection import GroupKFold
 
 from se.config import DATA, EARTH
 from se.earth import manifest
+from se.earth.folds import blocks
 from se.earth.frame import Frame
 from se.earth.gp import GP
 from se.ingest.names import norm
@@ -85,8 +86,6 @@ def observations() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def blocks(x, y, km=40.0):
-    return np.floor(x / km).astype(int) * 100003 + np.floor(y / km).astype(int)
 
 
 def mud_test(o: pd.DataFrame, win_m=150.0, folds=5) -> tuple[dict, pd.DataFrame]:

@@ -79,3 +79,79 @@ rules:
     check: {type: seal_hc, expect: "median seal above HC units > above dry units"}
     use: seal term of the hydrocarbon and CO2 targets (P6)
     guard: seal thickness from the grid at 2 km; faults and seal capacity are not modelled
+  # P9 (LOG L075): petroleum-system factors
+  - id: R-MATURE
+    statement: A source rock generates oil at about 100-150 deg C (the oil window) and gas above about 150 deg C; oil and gas are found more often near a mature source (kitchen).
+    status: sourced_unverified
+    sources:
+      - {url: "https://doi.org/10.1007/978-3-642-87813-8", says: "Tissot and Welte (1984), Petroleum Formation and Occurrence: oil generation with temperature (oil window), gas at higher maturity"}
+      - {url: "https://archives.datapages.com/data/alt-browse/aapg-special-volumes/m60.htm", says: "Magoon and Dow (1994), AAPG Memoir 60: the petroleum system, from active source rock to trap"}
+    check: {type: factor_rate, target: hydrocarbons, factor: lkit, below: 2.398, expect: "HC rate within 10 km of a kitchen (log1p 10 = 2.398) above the rate farther away"}
+    use: kit_oil, kit_gas, mature features of the hydrocarbon, oil and gas targets (P9.1)
+    guard: present-day temperature; uplifted basins (Barents) were hotter in the past, see R-UPLIFT and kit_max. Source presence is the grid's, not a TOC map
+  - id: R-MATURE-MAX
+    statement: In uplifted basins maturity was reached at maximum burial, so the kitchen that charged the traps is where the source was in the oil window before uplift.
+    status: inferred
+    sources:
+      - {url: "https://doi.org/10.1144/M35.17", says: "Henriksen et al. (2011): uplift and erosion of the greater Barents Sea, impact on prospectivity and petroleum systems"}
+    check: {type: factor_rate, target: hydrocarbons, factor: lkit_max, below: 2.398, expect: "HC rate within 10 km of a kitchen at maximum burial above the rate farther away"}
+    use: kit_max feature (P9.1), from the burial map of P9.2
+    guard: maximum-burial temperature = present temperature + gradient x net exhumation; exhumation from porosity (R-UPLIFT); in basins without uplift it repeats R-MATURE with noise
+  - id: R-CHARGE
+    statement: Oil migrates up-dip from a mature kitchen along the base of the seal, fills traps to their spill point and spills on (fill and spill); units that such oil reaches hold hydrocarbons more often.
+    status: sourced_unverified
+    sources:
+      - {url: "https://archives.datapages.com/data/alt-browse/aapg-special-volumes/m60.htm", says: "Magoon and Dow (1994): migration from the active source rock to the trap"}
+    check: {type: factor_rate, target: hydrocarbons, factor: p_charge, above: 0.5, expect: "HC rate where migrating oil reaches the unit (p_charge > 0.5) above the rate elsewhere"}
+    use: charge features and the charge element of the chance of success (P10.2, P10.5)
+    guard: carrier = the unit's own top on kriged 2-4 km surfaces; no fault seal, no expulsion direction; pinch-outs are exits
+  - id: R-TRAP
+    statement: Oil and gas accumulate in traps, structural closures sealed above; units in closure hold hydrocarbons more often.
+    status: sourced_unverified
+    sources:
+      - {url: "https://archives.datapages.com/data/alt-browse/aapg-special-volumes/m60.htm", says: "Magoon and Dow (1994): trap formation is an essential process of a petroleum system"}
+    check: {type: factor_rate, target: hydrocarbons, factor: lclos, above: 0.693, expect: "HC rate in units with closure over 10 m (log1p 1 = 0.693) above the rate without"}
+    use: closure, fault and structural-high features (P9.5)
+    guard: closures from kriged surfaces at 2-4 km see only large structures; faults are a regional map; wells are drilled on closures, so the contrast is muted by design
+  - id: R-QTZ
+    statement: Quartz cement grows in sandstones above about 70-80 deg C and then dominates porosity loss.
+    status: sourced_unverified
+    sources:
+      - {url: "https://archives.datapages.com/data/bulletns/1994-96/data/pg/0080/0005/0700/0731.html", says: "Walderhaug (1996), AAPG Bulletin 80(5) 731-745: kinetic modelling of quartz cementation and porosity loss from the temperature history"}
+    check: {type: porosity_trend, trend: qtz, expect: "a temperature term (T - 70 C)+ improves held-out porosity by 2 percent"}
+    use: candidate porosity trend in P9.2
+    guard: temperature and depth are nearly collinear in wells, so the data can hardly separate cement from compaction
+  - id: R-UPLIFT
+    statement: The Barents Sea was uplifted and eroded in the Cenozoic; net exhumation is 0 to more than 3000 m, so rocks are more compacted and were hotter than their present depth implies.
+    status: sourced_unverified
+    sources:
+      - {url: "https://doi.org/10.1144/M35.17", says: "Henriksen et al. (2011), Geological Society Memoirs 35: uplift and erosion of the greater Barents Sea, impact on petroleum systems"}
+      - {url: "https://www.searchanddiscovery.com/abstracts/html/2011/3Parctic/abstracts/henriksen.htm", says: "net erosion varies from 0 to more than 3000 m"}
+    check: {type: burial, expect: "porosity-implied net exhumation of Barents wells (median) between 500 and 3000 m; pilot median within 500 m of 0"}
+    use: burial trend in P9.2 and kit_max in P9.1
+    guard: exhumation from porosity assumes the pilot compaction curve is normal and the same lithology mix
+  - id: R-LEGACY
+    statement: Old wells that penetrate a storage unit and its seal are the main potential leak paths for stored CO2.
+    status: sourced_unverified
+    sources:
+      - {url: "https://doi.org/10.1007/s00254-004-1073-5", says: "Gasda, Bachu and Celia (2004), Environmental Geology 46: potentially leaky wells penetrating a deep saline aquifer"}
+    check: {type: legacy, expect: "counted per cell; no leak observations here, so not testable"}
+    use: legacy-wells layer and CO2 evidence (P9.3)
+    guard: total depth TVDSS from FactPages; wells without TVD use measured depth (an overcount at depth); plug quality is unknown
+  - id: R-SEABEDT
+    statement: Seabed temperature is the bottom-water temperature, about 6-8 deg C in the North Sea and below 0 deg C in the deep Norwegian Sea.
+    status: sourced
+    sources:
+      - {url: "https://www.ncei.noaa.gov/data/oceans/woa/WOA23/DATA/temperature/csv/decav/1.00/", says: "NOAA World Ocean Atlas 2023, annual mean temperature at standard depths (held in data/woa23)"}
+    check: {type: seabed, expect: "WOA bottom temperature per region; deep Norwegian Sea wells below 1 deg C"}
+    use: shallow temperature profile in P3.4 (P9.4)
+    guard: 1 degree climatology; steep slopes mix shelf and deep water in one cell
+  - id: R-SALT
+    statement: Rock salt conducts heat about two to four times better than other sediments, so the section above thick salt is warmer.
+    status: sourced_unverified
+    sources:
+      - {url: "https://www.searchanddiscovery.com/abstracts/html/1988/annual/abstracts/0230c.htm", says: "heat flow through and around salt sheets (AAPG 1988 abstract)"}
+      - {url: "https://www.osti.gov/servlets/purl/5225868", says: "measured thermal conductivity of pure halite about 6 W/m K"}
+    check: {type: salt_temp, expect: "a positive salt-thickness term lowers the held-out temperature error by 5 percent"}
+    use: temperature model in North Sea south (P9.7)
+    guard: Zechstein thickness from the grid (its base is the top plus a median thickness); few DSTs over salt

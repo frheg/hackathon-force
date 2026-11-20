@@ -4,7 +4,12 @@ Sources, best first (PLAN P1.1, LOG L055):
   force    FORCE 2020 train logs: X/Y (ED50 UTM 31N, checked: 6 m median from FactPages wellheads) and Z = -TVDSS per sample.
   factpages  wellhead (ED50), rig-floor height (KB), TD, TVD at TD, kick-off point. Direction is unknown, so the position stays at the
            wellhead and the lateral offset becomes an uncertainty radius. The depth model is chosen by measured error on FORCE wells.
-  vertical  no TVD at TD: TVD = MD, with a sigma calibrated on FORCE wells; flagged.
+  estimated no TVD at TD (1,032 NCS wellbores, mostly sidetracks): TVD at TD estimated from FactPages wells that have both (P10, owner
+           question on 25/1-14 G: MD 10,444 m, drawn 10 km deep while the reservoir is at about 2.2 km).
+           sidetrack of a parent with a known or estimated TVD: parent TVD + the median sidetrack-parent difference (1,798 pairs: -58 m,
+           5-95 percent -432 to +317 m); else TVD = MD x the median TVD/MD ratio of wells of the same kind, sidetrack or not, and MD band.
+           sigma from the 5-95 percent spread of the calibration set (/ 3.29). Then the 'kop' / 'ratio' path to that TVD.
+  vertical  no TVD and no estimate (no TD): TVD = MD, with a sigma calibrated on FORCE wells; flagged.
 TVDSS = TVD below rig floor - KB (checked: FORCE MD + Z = KB, median 0.0 m).
 """
 import json
@@ -42,6 +47,35 @@ def wellheads() -> pd.DataFrame:
     return w
 
 
+SIDETRACK = r"^(.*?\d)\s*([A-Z]{1,2}\d?)$"  # "25/1-14 G" -> parent "25/1-14"
+MD_BINS = [0, 2000, 3000, 4000, 5000, 7000, 1e6]
+
+
+def estimate_tvd(w: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """TVD at TD (m below rig floor) and its sigma for wellbores without one, calibrated on FactPages wellbores with both TD and TVD."""
+    w = w.copy(); w["parent"] = w.wellbore.str.extract(SIDETRACK)[0]; w["side"] = w.parent.notna()
+    w["bin"] = pd.cut(w.td, MD_BINS, labels=False)
+    k = w.dropna(subset=["td", "tvd_td"]); k = k[(k.td > 300) & (k.tvd_td <= k.td + 1)].assign(ratio=lambda d: d.tvd_td / d.td)
+    q = k.groupby(["kind", "side", "bin"]).ratio.quantile([0.05, 0.5, 0.95]).unstack()
+    known = k.set_index("wellbore").tvd_td; sp = k[k.side & k.parent.isin(known.index)]; dp = sp.tvd_td - sp.parent.map(known)
+    d05, d50, d95 = (float(dp.quantile(x)) for x in (0.05, 0.5, 0.95))
+    w["tvd_est"], w["tvd_sd"], w["tvd_how"] = w.tvd_td, 0.0, np.where(w.tvd_td.notna(), "factpages", "none")
+    miss = w.tvd_td.isna() & w.td.notna()
+    for i in w.index[miss]:  # by class first (parents too), then sidetracks from their parent
+        key = (w.at[i, "kind"], w.at[i, "side"], w.at[i, "bin"])
+        if key in q.index:
+            r05, r50, r95 = q.loc[key]; w.loc[i, ["tvd_est", "tvd_sd", "tvd_how"]] = w.at[i, "td"] * r50, w.at[i, "td"] * (r95 - r05) / 3.29, "class"
+    est = w.set_index("wellbore")
+    for i in w.index[miss & w.side]:
+        pa = w.at[i, "parent"]
+        if pa in est.index and np.isfinite(est.at[pa, "tvd_est"]):
+            psd = float(est.at[pa, "tvd_sd"]); t = min(float(est.at[pa, "tvd_est"]) + d50, float(w.at[i, "td"]))
+            w.loc[i, ["tvd_est", "tvd_sd", "tvd_how"]] = t, float(np.hypot(psd, (d95 - d05) / 3.29)), "parent"
+    cal = {"sidetrack_minus_parent_m": {"p05": round(d05), "p50": round(d50), "p95": round(d95), "pairs": int(len(dp))},
+           "ratio_classes": int(len(q)), "estimated": {h: int((w.tvd_how[miss] == h).sum()) for h in ("parent", "class", "none")}}
+    return w.drop(columns=["bin"]), cal
+
+
 def force_paths() -> pd.DataFrame:
     """FORCE 2020 train samples as (wellbore, md, x, y, tvdss), thinned to one per metre of MD."""
     f = pd.read_csv(FORCE_TRAIN, sep=";", usecols=["WELL", "DEPTH_MD", "X_LOC", "Y_LOC", "Z_LOC"]).dropna()
@@ -74,7 +108,7 @@ class Frame:
     """Lookup: wellbore + MD -> position, TVDSS and sigmas. Built once; FactPages sigmas calibrated on FORCE wells (calibrate())."""
 
     def __init__(self, cal: dict | None = None):
-        self.w = wellheads().set_index("wellbore")
+        w, self.est_cal = estimate_tvd(wellheads()); self.w = w.set_index("wellbore")
         self.fp = force_paths()
         self.force = {k: g for k, g in self.fp.groupby("wellbore")}
         self.cal = cal or {"model": "ratio", "sz_a": 0.0, "sz_b": 5.0, "vert_frac90": 0.05}
@@ -83,7 +117,9 @@ class Frame:
         if wb in self.force:
             return "force"
         r = self.w.loc[wb] if wb in self.w.index else None
-        return "factpages" if r is not None and np.isfinite(r.tvd_td) and np.isfinite(r.td) else "vertical"
+        if r is not None and np.isfinite(r.tvd_td) and np.isfinite(r.td):
+            return "factpages"
+        return "estimated" if r is not None and np.isfinite(r.tvd_est) and np.isfinite(r.td) else "vertical"
 
     def at(self, wb: str, md) -> dict:
         """Arrays for the given MDs. sigma_z: 1-sigma vertical error (m); r_lat: lateral uncertainty radius (m, ~90 percent)."""
@@ -106,6 +142,11 @@ class Frame:
             tvd, h = approx_tvd(md, float(r.td), float(r.tvd_td), kop, "kop" if np.isfinite(kop) else self.cal["model"])
             out = {"x": np.full_like(md, r.x), "y": np.full_like(md, r.y), "tvdss": tvd - kb,
                    "sigma_z": self.cal["sz_b"] + self.cal["sz_a"] * h, "r_lat": h}
+        elif src == "estimated":
+            kop = float(r.kop) if np.isfinite(r.kop) else np.nan
+            tvd, h = approx_tvd(md, float(r.td), float(r.tvd_est), kop, "kop" if np.isfinite(kop) else self.cal["model"])
+            frac = np.clip(md / max(float(r.td), 1.0), 0, 1)  # the TVD error grows along the well, from 0 at the rig floor to tvd_sd at TD
+            out = {"x": np.full_like(md, r.x), "y": np.full_like(md, r.y), "tvdss": tvd - kb, "sigma_z": self.cal["sz_b"] + float(r.tvd_sd) * frac, "r_lat": h}
         else:
             f = self.cal["vert_frac90"]  # 90th percentile of (MD - TVD) / MD on FORCE wells
             out = {"x": np.full_like(md, r.x if r is not None else np.nan), "y": np.full_like(md, r.y if r is not None else np.nan), "tvdss": md - kb,
@@ -173,7 +214,7 @@ def build() -> dict:
     EARTH.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     fr = Frame()
-    fr.cal = calibrate(fr)
+    fr.cal = calibrate(fr) | {"estimate": fr.est_cal}
     w = fr.w.reset_index()
     w["source"] = [fr.source(b) for b in w.wellbore]
     w.to_parquet(EARTH / "wells.parquet")

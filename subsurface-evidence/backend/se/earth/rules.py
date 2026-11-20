@@ -36,12 +36,22 @@ def boot_median_diff(a: pd.DataFrame, b: pd.DataFrame, col, n=400, seed=0):
     return float(a[col].median() - b[col].median()), float(np.percentile(d, 5)), float(np.percentile(d, 95))
 
 
+def boot_rate_diff(a: pd.DataFrame, b: pd.DataFrame, n=400, seed=0):
+    """Weighted event rate of a minus b (columns ev, w), resampling whole wells; returns (diff, p05, p95)."""
+    rng = np.random.default_rng(seed); ga, gb = dict(list(a.groupby("wellbore"))), dict(list(b.groupby("wellbore"))); wa, wb = list(ga), list(gb)
+    rate = lambda d: float(np.average(d.ev, weights=d.w))
+    d = [rate(pd.concat([ga[w] for w in rng.choice(wa, len(wa))])) - rate(pd.concat([gb[w] for w in rng.choice(wb, len(wb))])) for _ in range(n)]
+    return rate(a) - rate(b), float(np.percentile(d, 5)), float(np.percentile(d, 95))
+
+
 def verdict_from(lo, hi, want="+"):
     return ("agrees" if lo > 0 else "disagrees" if hi < 0 else "inconclusive") if want == "+" else ("agrees" if hi < 0 else "disagrees" if lo > 0 else "inconclusive")
 
 
 def check(r: dict) -> dict:
     c = r["check"]; t = c["type"]
+    if t in ("density_vs_core", "gardner_logs", "draupne_gr") and _force(["GR"]).empty:  # P8: regions without FORCE wells have no log data
+        return {"verdict": "not_testable", "why": "no FORCE log wells in this region"}
     if t == "athy_core":
         p = json.loads((EARTH / "poroperm_report.json").read_text()); a = p["athy_fit"]
         return {"phi0_pct": a["phi0_pct"], "c_per_km": a["c_per_km"], "sclater_christie_sandstone_c": 0.27, "held_out_rmse_pct": p["rmse_phi_pct"],
@@ -89,7 +99,7 @@ def check(r: dict) -> dict:
                 "wells": int(d.wellbore.nunique()), "shale_share": round(shale, 3), "verdict": "agrees" if d.GR.median() > 100 and lo > 0 and shale >= 0.8 else verdict_from(lo, hi)}
     if t == "co2_window":
         from se.earth.temperature import predict
-        zb = np.arange(200, 3001, 10.0); T, sT = predict(np.full(len(zb), 3800.0), np.full(len(zb), 3300.0), zb)
+        zb = np.arange(200, 3001, 10.0); T, sT = predict(np.full(len(zb), 3800.0), np.full(len(zb), 3300.0), zb, np.full(len(zb), 300.0))
         wd = 300.0; P = 0.1013 + 0.00981 * 1.03 * (zb + wd)
         sc = (T > c["Tc"]) & (P > c["Pc"]); z = float(zb[np.argmax(sc)]) if sc.any() else None
         z90 = float(zb[np.argmax((T - 1.645 * sT > c["Tc"]) & (P > c["Pc"]))]) if ((T - 1.645 * sT > c["Tc"]) & (P > c["Pc"])).any() else None
@@ -114,6 +124,46 @@ def check(r: dict) -> dict:
         diff, lo, hi = boot_median_diff(d[d.hc == 1], d[d.hc == 0], "seal")
         return {"hc_units": int((d.hc == 1).sum()), "dry_units": int((d.hc == 0).sum()), "median_seal_hc_m": round(float(d[d.hc == 1].seal.median()), 1),
                 "median_seal_dry_m": round(float(d[d.hc == 0].seal.median()), 1), "diff": round(diff, 1), "p05": round(lo, 1), "p95": round(hi, 1), "verdict": verdict_from(lo, hi)}
+    if t == "factor_rate":
+        from se.earth.factors import at
+
+        o = pd.read_parquet(EARTH / "targets" / f"{c['target']}_obs.parquet"); f = at(o)[c["factor"]].to_numpy()
+        hit = f < c["below"] if "below" in c else f > c["above"]
+        if hit.sum() < 20 or (~hit).sum() < 20:
+            return {"rows_in": int(hit.sum()), "rows_out": int((~hit).sum()), "verdict": "not_testable", "why": "fewer than 20 rows on one side"}
+        diff, lo, hi = boot_rate_diff(o[hit], o[~hit])
+        return {"rows_in": int(hit.sum()), "wells_in": int(o[hit].wellbore.nunique()), "rows_out": int((~hit).sum()), "rate_in": round(float(np.average(o[hit].ev, weights=o[hit].w)), 3),
+                "rate_out": round(float(np.average(o[~hit].ev, weights=o[~hit].w)), 3), "diff": round(diff, 3), "p05": round(lo, 3), "p95": round(hi, 3), "verdict": verdict_from(lo, hi)}
+    if t == "porosity_trend":
+        p = json.loads((EARTH / "poroperm_report.json").read_text()); r = p["rmse_phi_pct"]; k = f"unit_{c['trend']}"
+        return {"rmse_unit_athy_pct": r["unit_athy"], f"rmse_{k}_pct": r[k], "fit": p["fits"][c["trend"]], "adopted_trend": p["adopted_trend"],
+                "verdict": "agrees" if r[k] <= 0.98 * r["unit_athy"] else "inconclusive", "why": "inconclusive: no held-out gain, not evidence against cementation"}
+    if t == "burial":
+        from se.config import OUT
+
+        E = {rg: json.loads((OUT / "earth" / rg / "poroperm_report.json").read_text())["burial"] for rg in ("pilot", "barents") if (OUT / "earth" / rg / "poroperm_report.json").exists()}
+        ok = "barents" in E and "pilot" in E
+        fits = json.loads((OUT / "earth" / "barents" / "poroperm_report.json").read_text())["fits"] if "barents" in E else {}
+        return {"E_median_m": {k: v["E_median_m"] for k, v in E.items()}, "barents_c_per_km": {k: fits.get(k, {}).get("c_per_km") for k in ("athy", "burial")},
+                "verdict": ("agrees" if 500 <= E["barents"]["E_median_m"] <= 3000 and abs(E["pilot"]["E_median_m"]) <= 500 else "disagrees") if ok else "not_testable"}
+    if t == "legacy":
+        p = EARTH / "targets" / "legacy_wells.npz"
+        if not p.exists():
+            return {"verdict": "not_testable", "why": "targets not built"}
+        v = np.load(p)["value"]
+        return {"cells": int(len(v)), "share_with_any": round(float((v > 0).mean()), 3), "p99": float(np.percentile(v, 99)), "verdict": "not_testable", "why": "no leak observations"}
+    if t == "seabed":
+        from se.earth.seabed import bottom_temperature
+
+        w = pd.read_parquet(EARTH / "wells.parquet"); w = w[w.pilot].dropna(subset=["x", "y", "wd"]); T = bottom_temperature(w.x.to_numpy(), w.y.to_numpy(), w.wd.to_numpy())
+        deep = w.wd.to_numpy() > 800
+        return {"wells": int(len(w)), "median_C": round(float(np.median(T)), 2), "deep_wells": int(deep.sum()), "deep_median_C": round(float(np.median(T[deep])), 2) if deep.any() else None,
+                "replaces_C": 7.0, "verdict": "not_testable", "why": "a measured climatology used as given; no seabed temperatures in our wells"}
+    if t == "salt_temp":
+        sa = json.loads((EARTH / "temperature_report.json").read_text()).get("salt", {})
+        if "rmse_with_C" not in sa:
+            return sa | {"verdict": "not_testable"}
+        return sa | {"verdict": "agrees" if sa["adopt"] else "inconclusive" if sa["C_per_km_salt"] > 0 else "disagrees"}
     return {"verdict": "not_testable"}
 
 
