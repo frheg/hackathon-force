@@ -3,13 +3,16 @@
     uv run pytest -q
 """
 
+import json
+
 import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
 import app as studio
 import common
-from sketches import copilot, detective, doctor, reports, seismic, spud, tieback, wells
+from sketches import copilot, detective, doctor, reports, seismic, spud, strata, tieback, wells
 
 client = TestClient(studio.api)
 
@@ -167,6 +170,39 @@ def test_verify_with_stub(stub):
     assert r.status_code == 200 and len(r.json()["claims"]) == 2
 
 
+STRATA_SCENE = {
+    "target": "Green clay", "definition": "Share of descriptions mentioning green clay", "region": "North Sea",
+    "formations": ["SELE FM"], "neighbours": False, "depth_reference": "rig",
+    "interval": {"wellbore": "34/10-1", "unit": "34/10-1 | SELE FM", "top_md": 1000, "base_md": 1200, "hits": 0, "trials": 2},
+}
+
+
+def test_strata_scene_focus_and_explicit_override(monkeypatch):
+    async def fake_chat(messages, **kw):
+        assert kw["model"] == strata.MODEL
+        assert "Workspace context (not a citation)" in messages[1]["content"]
+        return "See the FactPages entry [F:1-wellbore]."
+
+    monkeypatch.setattr(strata, "chat", fake_chat)
+    path = "/detective/api/strata/ask"
+    for q, well in [("What is known here?", "34/10-1"), ("What is known about 9/2-1?", "9/2-1")]:
+        r = client.post(path, json={"q": q, "scene": STRATA_SCENE})
+        assert r.status_code == 200, r.text
+        facts = [s for s in r.json()["sources"] if s["kind"] == "fact"]
+        assert facts and all(well in s["document"] for s in facts)
+        assert "[F:1-wellbore]" in r.json()["answer"]
+    assert client.post(path, json={"q": "x" * 2001, "scene": STRATA_SCENE}).status_code == 422
+
+
+def test_strata_busy_uses_existing_gateway_status(monkeypatch):
+    async def busy(*a, **k):
+        raise common.ModelBusy("reserved")
+
+    monkeypatch.setattr(strata, "chat", busy)
+    r = client.post("/detective/api/strata/ask", json={"q": "What is shown?", "scene": STRATA_SCENE})
+    assert r.status_code == 503
+
+
 def test_model_busy_becomes_503(monkeypatch):
     async def busy(*a, **k):
         raise common.ModelBusy("reserved")
@@ -200,6 +236,65 @@ def test_scorecard_sample_keeps_topic(monkeypatch):
 
     out = asyncio.run(scorecard.answers(8, ["closed"]))
     assert out["answers"]["closed"]["n"] >= 8 and out["answers"]["closed"]["by_topic"]
+
+
+def test_citation_metrics_reject_unknown_sources():
+    from sketches.scorecard import citation_metrics
+
+    m = citation_metrics("The pressure was 300 bar [S1]. Its source is missing [S9].", [{"ref": "S1"}])
+    assert m["citation_precision"] == 0.5 and m["unknown_citations"] == ["[S9]"]
+    assert m["claim_trace_coverage"] == 1.0
+
+
+def test_distractor_chunks_are_deterministic_and_provenanced(tmp_path):
+    gold_text = ("This gold passage describes the formation and the pressure test from the well. "
+                 "It has enough natural language words to remain in the supported QA corpus.")
+    first = ("The report describes a core from the reservoir and its porosity was measured in the laboratory. "
+             "These results are useful for understanding the formation and the test program at the well.")
+    second = ("This completion report explains that the casing was set and the leak off test was performed after the "
+              "drilling interval had reached its planned depth in the field.")
+    qa = pd.DataFrame([{
+        "Content": repr([gold_text]), "Chunk_IDs": repr(["gold-1"]), "Document_name": repr(["GOLD.PDF"]),
+        "Document_id": repr(["doc-1"]), "Wellbore_names": repr([["35/10-1"]]),
+        "Field_names": repr([["FIELD"]]), "Formation_names": repr([["BRENT GP"]]), "Entailed": True,
+    }])
+    ocr = pd.DataFrame([
+        {"_id": "same", "page": 1, "filename": "same.pdf", "TITLE": "SAME.PDF", "content": gold_text,
+         "content_could_be_natural_language": True, "WELLBORE NAME": "35/10-1"},
+        {"_id": "bad-flag", "page": 2, "filename": "bad.pdf", "TITLE": "BAD.PDF", "content": first,
+         "content_could_be_natural_language": False, "WELLBORE NAME": "35/10-1"},
+        {"_id": "gibberish", "page": 3, "filename": "noise.pdf", "TITLE": "NOISE.PDF",
+         "content": "xqz qzx zqx cvbn nmkl plok sdfg hjkl qwer asdf zxcv bnmq wert tyui opas dfghj klzx cvbn",
+         "content_could_be_natural_language": True, "WELLBORE NAME": "35/10-1"},
+        {"_id": "one", "page": 4, "filename": "one.pdf", "TITLE": "ONE.PDF", "content": first,
+         "content_could_be_natural_language": True, "WELLBORE NAME": "35/10-1"},
+        {"_id": "two", "page": 5, "filename": "two.pdf", "TITLE": "TWO.PDF", "content": second,
+         "content_could_be_natural_language": True, "WELLBORE NAME": "34/10-1"},
+        {"_id": "duplicate", "page": 6, "filename": "one-b.pdf", "TITLE": "ONE-B.PDF", "content": first,
+         "content_could_be_natural_language": True, "WELLBORE NAME": "35/10-1"},
+    ])
+    qa_path, ocr_path = tmp_path / "qa.csv", tmp_path / "ocr.csv"
+    qa.to_csv(qa_path, index=False)
+    ocr.to_csv(ocr_path, index=False)
+    args = dict(distractor_limit=2, seed=17, official_csv=ocr_path, qa_csv=qa_path,
+                chunks_path=tmp_path / "chunks.parquet", manifest_path=tmp_path / "manifest.json", chunksize=2)
+    one = reports.build_chunks(**args)
+    two = reports.build_chunks(**args)
+    assert one.to_dict("records") == two.to_dict("records")
+    assert len(one) == 3 and (one.source == "gold").sum() == 1 and (one.source == "official_ocr").sum() == 2
+    assert gold_text in set(one.text) and not (one.text.isin([first]) & (one.source == "gold")).any()
+    assert one[one.source == "official_ocr"].chunk_id.nunique() == 2
+    assert set(one.columns) >= {"source", "document", "page", "wellbores", "fields", "formations"}
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["gold_count"] == 1 and manifest["distractor_count"] == 2
+    assert manifest["sampling_seed"] == 17 and manifest["corpus_sha256"]
+
+
+def test_old_chunk_schema_gets_exact_compatible_defaults():
+    row = pd.Series({"chunk_id": "old", "text": "old text", "doc_name": "OLD.PDF", "doc_id": "id",
+                     "wellbores": [], "fields": [], "formations": []})
+    p = reports.passage(row, 1, 0)
+    assert p["source"] == "gold" and p["page"] is None and p["document"] == "OLD.PDF"
 
 
 # -- the Data Atlas --

@@ -83,6 +83,84 @@ def test_spec_id_is_stable_and_recipe_specific():
     assert spec_id(a) != spec_id({**a, "success": ["x|eq|2"]})
 
 
+def test_interval_assignment_counts_source_row_once_and_has_unique_ids():
+    from se.ingest.units import assign_intervals
+    t = pd.DataFrame([
+        {"wellbore": "w", "name": "G", "level": "GROUP", "top": 0., "bot": 200.},
+        {"wellbore": "w", "name": "F broad", "level": "FORMATION", "top": 20., "bot": 180.},
+        {"wellbore": "w", "name": "F narrow", "level": "FORMATION", "top": 40., "bot": 100.},
+        {"wellbore": "w", "name": "F narrow", "level": "FORMATION", "top": 45., "bot": 105.},
+    ])
+    r = pd.DataFrame({"wellbore": ["w", "w"], "depth_from": [60., 190.], "has_green": [True, False]})
+    u, d = assign_intervals(r, t)
+    assert u.loc[u.name == "F narrow"].coverage.sum() == 1
+    assert u.loc[u.name == "F broad"].coverage.sum() == 0
+    assert u.loc[u.name == "G"].coverage.sum() == 1
+    assert d["assigned_once"] == 2 and d["group_fallback"] == 1 and d["ambiguous_candidates"] == 1
+    assert u.unit.is_unique and u[u.level == "FORMATION"].group.eq("G").all()
+    assert all("FORMATION" in x and "[" in x for x in u[u.level == "FORMATION"].unit)
+
+
+def test_high_latitude_distance_uses_epsg3035():
+    from pyproj import Geod
+
+    from se.evidence.spatial import project
+    a, b = project([3., 4.], [75., 75.])
+    distance = np.linalg.norm(b - a)
+    geodesic = Geod(ellps="WGS84").inv(3., 75., 4., 75.)[2] / 1000
+    assert distance == pytest.approx(geodesic, rel=0.03)
+    assert 25 < distance < 35
+
+
+def test_nested_calibration_does_not_read_outer_labels():
+    from se.validate.cv import VARIANTS, nested_calibrate
+    rng = np.random.default_rng(4)
+    inner = pd.DataFrame({"l_" + n: rng.normal(size=80) for n in VARIANTS})
+    inner["coverage"], inner["n_green"] = 10, rng.binomial(10, 0.3, 80)
+    outer = pd.DataFrame({"l_" + n: rng.normal(size=8) for n in VARIANTS})
+    a, params_a = nested_calibrate(inner, outer)
+    b, params_b = nested_calibrate(inner, outer.assign(n_green=10**6, coverage=10**6))
+    assert params_a == params_b
+    assert np.allclose(a.filter(like="p_"), b.filter(like="p_"))
+
+
+def test_no_evidence_layer_is_off_by_default():
+    from se.api.state import default_layers
+    assert default_layers({"strat": "helps", "spatial": "no_evidence", "logs": "hurts"}) == ["strat"]
+    assert default_layers({"strat": "helps", "spatial": "helps", "logs": "no_evidence"}) == ["strat", "spatial"]
+
+
+def test_dataset_catalog_exposes_usage_licence_and_limitations():
+    from se.api.main import app
+    with TestClient(app) as c:
+        cat = c.get("/api/provenance/datasets").json()
+        assert cat["datasets"] and cat["bytes_total"] > 0
+        ids = {d["id"] for d in cat["datasets"]}
+        assert {"factpages", "completion", "force2020_csv", "realpore", "smeaheia", "sleipner"} <= ids
+        for d in cat["datasets"]:
+            assert d["license"] and d["truth"] and d["limitations"]
+
+
+def test_gpu_proof_is_honest_and_uses_no_hidden_test():
+    from se.api.main import app
+    with TestClient(app) as c:
+        proof = c.get("/api/provenance/proof").json()
+        assert proof["split"]["hidden_test_used"] is False
+        assert proof["device"] == "cuda"
+        assert proof["data"]["overlap_wells"] > 50
+        assert proof["metrics"]["porosity"]["histgb"]["n"] > 20_000
+        assert proof["limitations"] and "not" in proof["purpose"].lower()
+
+
+def test_model_lineage_names_evaluation_and_source_hashes():
+    from se.api.main import app
+    with TestClient(app) as c:
+        lineage = c.get("/api/provenance/model").json()
+        assert lineage["validation"]["calibration"].startswith("nested")
+        assert lineage["unit_policy"].startswith("formation-first")
+        assert lineage["code"] and all("sha256" in x for x in lineage["code"])
+
+
 def test_too_little_data_is_refused():
     from se.targets import store
     with pytest.raises(ValueError, match="too little data"):

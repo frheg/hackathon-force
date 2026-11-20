@@ -138,3 +138,164 @@ def survey_wells(survey: str):
         d, i = tree.query(p)
         out.append({"name": n, "lat": la, "lon": lo, "x": float(p[0]), "y": float(p[1]), "il": int(ilxl[i, 0]), "xl": int(ilxl[i, 1]), "dist_m": round(float(d) * 1000)})
     return out
+
+
+# ---- enrichment: what else we know along a section (LOG L061). Interpreted horizons are in survey time already; well logs and tops are
+# in depth and are put into time with the GN1101 well-tie velocity (L058) for Smeaheia surveys, else with the UI's preview velocity.
+@lru_cache(maxsize=1)
+def _frame():
+    from se.config import EARTH
+    from se.earth.frame import Frame
+
+    return Frame(json.loads((EARTH / "frame_calibration.json").read_text()))
+
+
+@lru_cache(maxsize=1)
+def _force_logs() -> dict:
+    from se.earth.frame import FORCE_TRAIN
+    from se.ingest.names import norm
+
+    f = pd.read_csv(FORCE_TRAIN, sep=";", usecols=["WELL", "DEPTH_MD", "GR"])  # train only: the hidden test labels are never read
+    f["wb"] = f.WELL.map(norm)
+    return {wb: (g.DEPTH_MD.to_numpy(), g.GR.to_numpy()) for wb, g in f.dropna(subset=["GR"]).groupby("wb")}
+
+
+@lru_cache(maxsize=4)
+def _las_gr(wb: str):
+    import zipfile
+
+    from se.config import DATA
+    from se.modeling.smeaheia_velocity import _las_curve
+
+    member = {"32/4-1": "Well_Logs/data/32 4-1", "32/2-1": "Well_Logs/data/32 2-1"}.get(wb)
+    if not member:
+        return None
+    with zipfile.ZipFile(DATA / "seismic" / "smeaheia" / "well_logs.zip") as z:
+        return _las_curve(z.read(member), "GR", "gAPI")
+
+
+@lru_cache(maxsize=1)
+def _tops_all() -> pd.DataFrame:
+    from se.earth.tops import raw_tops
+
+    return raw_tops().dropna(subset=["top_md"])
+
+
+@lru_cache(maxsize=1)
+def _horizons():
+    from scipy.spatial import cKDTree
+
+    from se.earth import seismic as es
+
+    out = {}
+    for src, name in {"Seabed": "SEABED", **es.HORIZONS}.items():
+        p = es.read(src); out[name] = (p, cKDTree(p[:, :2]))
+    return out
+
+
+def _to_time(survey: str, xy_utm, tvdss, v_kms: float):
+    """TVDSS -> two-way time (ms). Smeaheia: invert the L058 tie (seabed time at the well + layer-velocity function); else 2 z / v."""
+    from se.config import EARTH
+
+    tvdss = np.asarray(tvdss, float)
+    rep = EARTH / "seismic_report.json"
+    if meta(survey)["dataset"] == "smeaheia" and rep.exists():
+        p, kd = _horizons()["SEABED"]
+        nb = kd.query_ball_point(xy_utm, 250.0) or kd.query_ball_point(xy_utm, 1500.0)  # the seabed is smooth: a wider search is safe
+        if nb:
+            tsb = float(np.median(p[nb, 2])); vel = json.loads(rep.read_text())["velocity"]
+            t = np.linspace(tsb, 6000, 3000); dt = (t - tsb) / 2000.0
+            z = vel["water_mps"] * tsb / 2000.0 + dt * (vel["a_mps"] + vel["b_mps_per_s"] * dt)
+            zw = vel["water_mps"] * np.linspace(0, tsb, 200) / 2000.0
+            tt = np.r_[np.linspace(0, tsb, 200), t]; zz = np.r_[zw, z]
+            return np.interp(tvdss, zz, tt), f"GN1101 well-tie velocity (L058): water {vel['water_mps']:.0f} m/s, rock {vel['a_mps']:.0f} + {vel['b_mps_per_s']:.0f} x one-way time; tie residual sd {vel['tie_residual_sd_m']:.0f} m"
+    return 2000.0 * tvdss / (v_kms * 1000.0), f"uncalibrated preview: constant {v_kms:.2f} km/s from sea level"
+
+
+@router.get("/enrich")
+def enrich(survey: str, axis: str | None = None, index: int | None = None, v: float = 2.0):
+    """Wells with gamma ray and formation tops in survey time; interpreted horizons along the chosen line (Smeaheia key horizons 2010)."""
+    to_utm = Transformer.from_crs(4326, 23031, always_xy=True)
+    fr, logs, tops = _frame(), _force_logs(), _tops_all()
+    wl, models = [], set()
+    for w in survey_wells(survey):
+        wb = w["name"]
+        e, n = to_utm.transform(w["lon"], w["lat"])
+        md, gr, src = None, None, None
+        if wb in logs:
+            md, gr = logs[wb]; src = "FORCE 2020 (train)"
+        else:
+            try:
+                r = _las_gr(wb)
+            except Exception:
+                r = None
+            if r is not None:
+                md, gr = r; src = "Smeaheia LAS"
+        item = {**w, "log_source": src}
+        if md is not None:
+            k = np.unique(np.round(md / 4.0), return_index=True)[1]  # one sample per 4 m
+            md, gr = md[k], gr[k]
+            z = np.asarray(fr.at(wb, md)["tvdss"], float); ok = np.isfinite(z)
+            t, model = _to_time(survey, (e, n), z[ok], v); models.add(model)
+            item["gr"] = {"twt": np.round(t, 1).tolist(), "v": np.round(gr[ok], 1).tolist(), "tvdss": np.round(z[ok], 1).tolist()}
+        tp = tops[tops.wellbore == wb]
+        if len(tp):
+            z = np.asarray(fr.at(wb, tp.top_md.to_numpy())["tvdss"], float)
+            t, model = _to_time(survey, (e, n), z, v); models.add(model)
+            item["tops"] = [{"name": a, "level": b, "md": float(c), "tvdss": round(float(d), 1), "twt": round(float(tt), 1)} for a, b, c, d, tt in zip(tp.name, tp.level, tp.top_md, z, t) if np.isfinite(tt)]
+        wl.append(item)
+    hz = []
+    if axis in ("inline", "crossline") and index is not None and meta(survey)["dataset"] == "smeaheia":
+        ll, _, ilxl, _ = geo(survey)
+        sel = ilxl[:, 0 if axis == "inline" else 1] == index
+        along = ilxl[sel, 1 if axis == "inline" else 0]; o = np.argsort(along); along = along[o]
+        e, n = to_utm.transform(ll[sel, 1][o], ll[sel, 0][o])
+        for name, (p, kd) in _horizons().items():
+            d, i = kd.query(np.c_[e, n])
+            t = np.where(d < 75.0, p[i, 2], np.nan)  # an interpreted point within 75 m of the trace, else a gap
+            if np.isfinite(t).sum() >= 5:
+                hz.append({"name": name, "along": along.tolist(), "twt": [None if not np.isfinite(x) else round(float(x), 1) for x in t]})
+    return {"survey": survey, "wells": wl, "horizons": hz, "time_model": sorted(models),
+            "horizon_source": "Smeaheia Key_Horizons_2010 (Equinor, Gassnova), interpreted two-way time" if hz else None}
+
+
+@router.get("/cube")
+def cube(survey: str, max_points: int = 350_000, horizons: bool = True, fill: bool = True):
+    """The whole decimated survey as one block on the inline x crossline x time grid, thinned further to about max_points values, int8
+    (0 where no trace: shown transparent). With horizons: interpreted horizon times at the block's inline/crossline nodes (Smeaheia)."""
+    ll, xy, ilxl, tr = geo(survey)
+    m = meta(survey)
+    ui, uj = np.unique(ilxl[:, 0]), np.unique(ilxl[:, 1]); nt = tr.shape[1]
+    f = (len(ui) * len(uj) * nt / max_points) ** (1 / 3)  # the same thinning on all three axes
+    si, sj, sk = max(1, int(np.ceil(f))), max(1, int(np.ceil(f))), max(1, int(np.ceil(f)))
+    gi, gj = ui[::si], uj[::sj]
+    keep = np.isin(ilxl[:, 0], gi) & np.isin(ilxl[:, 1], gj)
+    ii, jj = np.searchsorted(gi, ilxl[keep, 0]), np.searchsorted(gj, ilxl[keep, 1])
+    a = np.zeros((len(gi), len(gj), len(range(0, nt, sk))), np.int8)
+    v = np.asarray(tr[np.where(keep)[0]][:, ::sk], dtype=np.float32)
+    a[ii, jj] = np.clip(np.round(v / m["amp_p99"] * 127), -127, 127).astype(np.int8)
+    have = np.zeros(a.shape[:2], bool); have[ii, jj] = True; filled = 0
+    if fill:  # fill holes between kept traces (inside the survey) from the nearest trace within 2 nodes; outside stays empty (transparent)
+        from scipy.ndimage import binary_closing, distance_transform_edt
+
+        inside = binary_closing(have, iterations=2) | have
+        d, (ni_, nj_) = distance_transform_edt(~have, return_indices=True)
+        hole = inside & ~have & (d <= 2)
+        a[hole] = a[ni_[hole], nj_[hole]]; filled = int(hole.sum())
+    t = m["t0_ms"] + np.arange(0, nt, sk) * m["dt_ms"]
+
+    def span(col, val):  # km from the first to the last trace of one line, for the block's true aspect
+        q = np.where(ilxl[:, col] == val)[0]
+        return float(np.hypot(*(xy[q].max(0) - xy[q].min(0)))) if len(q) > 1 else 1.0
+    spans = {"along_crossline_axis_km": round(span(0, ui[len(ui) // 2]), 2), "along_inline_axis_km": round(span(1, uj[len(uj) // 2]), 2)}
+    out = {"survey": survey, **spans, "il": gi.tolist(), "xl": gj.tolist(), "t_ms": t.round(1).tolist(), "amp": a.ravel().tolist(), "order": "il, xl, t (t fastest)",
+           "stride": {"inline": si, "crossline": sj, "time": sk}, "filled_traces": filled, "traces_in_block": int(have.sum()), "amp_p99": float(m["amp_p99"]), "credit": CREDIT.get(m["dataset"], ""), "horizons": []}
+    if horizons and m["dataset"] == "smeaheia":
+        to_utm = Transformer.from_crs(4326, 23031, always_xy=True)
+        e, n = to_utm.transform(ll[keep, 1], ll[keep, 0])
+        for name, (p, kd) in _horizons().items():
+            d, k = kd.query(np.c_[e, n])
+            hz = np.full((len(gi), len(gj)), np.nan); hz[ii, jj] = np.where(d < 75.0, p[k, 2], np.nan)
+            if np.isfinite(hz).sum() >= 20:
+                out["horizons"].append({"name": name, "twt": [[None if not np.isfinite(x) else round(float(x), 1) for x in r] for r in hz]})
+    return out

@@ -49,6 +49,14 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     ok("layout: the plot toolbar is not covered by either sidebar", r1.left >= sL.right - 1 && r1.right <= sR.left + 1, `toolbar ${Math.round(r1.left)}-${Math.round(r1.right)}, left bar ends ${Math.round(sL.right)}, right bar starts ${Math.round(sR.left)}`);
     ok("all settings are in the left sidebar", ["#reg", "#ref", "#pal", "#cmin", "#cmax", "#cw", "#c-sp", "#c-res", "#ex", "#op", "#sv-id", "#sv-inspect"].every((q) => $(q) && $(q).closest("#sideL")), "");
     ok("all information is in the right sidebar", ["#hs", "#keybody"].every((q) => $(q) && $(q).closest("#sideR")), "");
+    $("#infoTab").click(); $("#infoTab").dispatchEvent(new (F().KeyboardEvent)("keydown", { key: "ArrowRight", bubbles: true }));
+    ok("right pane tabs switch with arrow keys", $("#deskTab").getAttribute("aria-selected") === "true" && $("#sbR").hidden && !$("#deskPane").hidden);
+    $("#infoTab").click();
+    const clickTrace = g3.data.find((t) => t.meta?.cls >= 0);
+    g3.emit("plotly_click", { points: [{ data: clickTrace, customdata: clickTrace.customdata[0] }] });
+    $("#focus-ask").click();
+    ok("selected interval carries into Strata Desk", !$("#deskPane").hidden && / m MD/.test($("#desk-scope").textContent));
+    $("#infoTab").click(); $("#focus-clear").click();
     const wPlot = () => D().querySelector(".plotwrap").getBoundingClientRect().width, w0 = wPlot(); $("#colL").click(); await sleep(1300); const wShut = $("#sideL").getBoundingClientRect().width, w1 = wPlot();
     ok("the 3D plot follows its container after a sidebar change (redrawn, not stretched)", Math.abs($("#p3")._fullLayout.width - w1) <= 2, `layout ${$("#p3")._fullLayout.width} px vs container ${Math.round(w1)} px`); $("#colR").click(); await sleep(400); const w2 = wPlot();
     ok("sidebars collapse to a strip and the plot grows", wShut < 60 && w1 > w0 + 200 && w2 > w1 + 200, `left bar ${Math.round(wShut)} px; plot ${Math.round(w0)} -> ${Math.round(w1)} -> ${Math.round(w2)} px`);
@@ -139,10 +147,10 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     for (const v of [30, 40, 50, 60, 70, 80]) { $("#op").value = v; fire($("#op"), "input"); await sleep(30); } await sleep(1500);
     ok("a slider drag (6 ticks) refetches nothing and redraws once", nScene() === n0, `${nScene() - n0} scene requests`);
     $("#pal").value = "warm"; fire($("#pal"), "change"); await sleep(1500); ok("palette change reuses the loaded scene", nScene() === n0, `${nScene() - n0} scene requests`);
-    $("#c-sp").click(); await waitFor(() => nScene() > n0, 20000); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
+    const spWasOn = $("#c-sp").checked; if (spWasOn) { $("#c-sp").click(); await waitFor(() => nScene() > n0, 20000); }  // the default depends on the layer status (on only when it helps) await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
     const flat = (() => { const sh = $("#p3").data.find((d) => d.type === "surface" && /Model estimate/.test(d.hovertemplate || "")); const v = sh.surfacecolor.flat().filter((x) => x != null); return v.length && v.every((x) => Math.abs(x - v[0]) < 1e-9); })();
     ok("neighbour switch off: each estimate sheet is flat (formation rate only)", flat);
-    $("#c-sp").click(); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
+    if (spWasOn) $("#c-sp").click(); await waitFor(() => !D().body.classList.contains("busy"), 30000); await sleep(1000);
     const cells = () => $("#p3").data.filter((d) => d.type === "surface" && /Model estimate/.test(d.hovertemplate || "")).reduce((n, d) => n + d.x.flat().length, 0), c0 = cells();
     $("#c-res").value = "0.05"; fire($("#c-res"), "change"); await waitFor(() => cells() > c0 * 2, 60000); ok("fine estimate detail gives a much finer grid", cells() > c0 * 2, `${c0} -> ${cells()} cells`);
     $("#c-res").value = "0.15"; fire($("#c-res"), "change"); await sleep(1500);
@@ -153,9 +161,11 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     F().location.hash = "scene"; await waitFor(() => $("#sv-id") && $("#p3") && $("#p3").data && $("#p3").data.length > 3, 90000);
     const f2 = (el, t) => el.dispatchEvent(new Event(t, { bubbles: true }));
     $("#sv-id").value = "sleipner_08p08"; f2($("#sv-id"), "change"); await sleep(1500); $("#sv-base").value = "sleipner_94p08"; f2($("#sv-base"), "change"); await sleep(1500);
-    $("#sv-inspect").click(); ok("Inspect opens its views in the right sidebar and its controls in the left", !!(await waitFor(() => $("#sec-insp") && $("#si2d") && $("#si2d").data && $("#si3d") && $("#si3d").data, 90000)));
+    $("#sv-inspect").click(); ok("Inspect takes over the main view with a 2D section; controls on the left", !!(await waitFor(() => $("#sec-insp") && $("#si2d") && $("#si2d").data && D().querySelector(".istage"), 90000)));
+    D().querySelector('[data-lay="only3d"]').click(); ok("the 3D cube view draws when chosen", !!(await waitFor(() => $("#si3d") && $("#si3d").data, 60000)) && $("#si2d").offsetWidth === 0);
     ok("2D view: inline section heatmap with line numbers on the axis", $("#si2d").data[0].type === "heatmap" && /Crossline/.test($("#si2d").data[0].hovertemplate) && $("#si2d").data[0].x.length > 20, $("#si2d").data[0].hovertemplate.replace(/<[^>]*>/g, " ").slice(0, 90));
     ok("3D view: two sections, a time slice and the survey box", $("#si3d").data.filter((d) => d.type === "surface").length === 3 && $("#si3d").data.some((d) => d.type === "scatter3d" && d.name === "survey box"));
+    D().querySelector('[data-lay="only2d"]').click(); await waitFor(() => $("#si2d").offsetWidth > 0 && $("#si2d").data, 30000); await sleep(1500);
     ok("info lists the survey, sampling, lines, amplitude, our wells and the credit", /Sampling/.test($("#siinfo").textContent) && /Our wells/.test($("#siinfo").textContent) && /Equinor/.test($("#siinfo").textContent) && /difference/.test($("#siinfo").textContent), $("#siinfo").textContent.replace(/\s+/g, " ").slice(0, 100));
     const hz = $("#si2d").data[0]; $("#si2d").emit("plotly_hover", { points: [{ data: { type: "heatmap" }, x: hz.x[10], y: hz.y[10], z: 0.2 }] }); await sleep(300);
     ok("hover reads out position and amplitude", /inline \d+, crossline \d+/.test($("#sihov").textContent) && /amplitude/.test($("#sihov").textContent), $("#sihov").textContent.slice(0, 120));
@@ -166,7 +176,24 @@ const waitFor = async (fn, ms = 60000) => { const t = Date.now(); while (Date.no
     const y0 = JSON.stringify($("#si2d").data[0].y.slice(0, 2)); D().querySelector('[name="si-mode"][value="inline"]').checked = true; f2(D().querySelector('[name="si-mode"][value="inline"]'), "change"); await sleep(2000);
     const tm = JSON.stringify($("#si2d").data[0].y.slice(0, 3)); $("#sv-v").value = 2.4; f2($("#sv-v"), "input"); $("#si-d").click(); await sleep(2500);  // at 2.0 km/s one ms of two-way time is exactly one metre, so use another velocity
     ok("depth toggle rescales the vertical axis by the velocity (x1.2 at 2.4 km/s)", Math.abs($("#si2d").data[0].y[1] / (JSON.parse(tm)[1] || 1) - 1.2) < 0.01 && /Depth/.test($("#si2d").layout.yaxis.title.text), tm + " -> " + JSON.stringify($("#si2d").data[0].y.slice(0, 3)));
+    D().querySelector('[data-lay="only3d"]').click(); await sleep(1500);
+    $("#si-en").click(); await waitFor(() => $("#siinfo") && /Enriched/.test($("#siinfo").textContent), 60000);
+    ok("enrich adds tops (and horizons or gamma ray where they exist) and names the depth-to-time model", /Depth to time/.test($("#siinfo").textContent) && $("#si3d").data.length > 5, $("#siinfo").textContent.slice(0, 160));
+    $("#si-en").click(); await sleep(1500);
     $("#sv-inspect").click(); await sleep(500); ok("Close inspector removes both parts", !D().querySelector("#sec-insp") && !D().querySelector("#sec-inspc") && /Inspect seismic/.test($("#sv-inspect").textContent));
+    // --- seven tabs; secondary pages under a sub-navigation; architecture charts with pan and zoom
+    ok("the header has eight tabs (Earth model first)", D().querySelectorAll("#links a").length === 8 && D().querySelector("#links a").dataset.p === "earth", [...D().querySelectorAll("#links a")].map((a) => a.textContent).join(", "));
+    F().location.hash = "layers"; await waitFor(() => D().querySelector(".subnav"), 30000);
+    ok("Layers opens under Validation with its sub-navigation", D().querySelector("#links a.on")?.dataset.p === "validation" && D().querySelector(".subnav a.on")?.textContent === "Layers");
+    F().location.hash = "architecture"; await waitFor(() => D().querySelectorAll(".pz svg").length === 2, 60000);
+    const pz = D().querySelector(".pz"), t0 = D().querySelector(".pzin").style.transform; pz.dispatchEvent(new (F().WheelEvent)("wheel", { deltaY: -100, clientX: 300, clientY: 200, bubbles: true, cancelable: true }));
+    ok("architecture: two mermaid charts; wheel zooms", D().querySelectorAll(".pz svg").length === 2 && D().querySelector(".pzin").style.transform !== t0);
+    // --- earth model page (P7.2)
+    F().location.hash = "earth"; ok("earth model: surfaces, target cells and wells are drawn", !!(await waitFor(() => $("#pe") && $("#pe").data && $("#pe").data.some((d) => d.type === "surface") && $("#pe").data.some((d) => d.type === "scatter3d" && d.customdata), 120000)));
+    { const g = $("#pe"), d = g.data.find((x) => x.type === "scatter3d" && x.customdata); g.emit("plotly_click", { points: [{ data: d, customdata: d.customdata[0] }] });
+      ok("clicking a cell shows its evidence chain (probability, range, support, nearest observations or terms)", !!(await waitFor(() => /support/.test($("#e-cb").textContent) && /range/.test($("#e-cb").textContent), 30000)), $("#e-cb").textContent.slice(0, 120)); }
+    { const n0 = $("#e-n").textContent; $("#e-p").value = 0.9; fire($("#e-p"), "input"); await waitFor(() => $("#e-n").textContent !== n0, 30000); ok("a higher probability threshold shows fewer cells", parseInt($("#e-n").textContent.replace(/,/g, "")) < parseInt(n0.replace(/,/g, "")), n0 + " -> " + $("#e-n").textContent); }
+    { $("#e-c").value = "gr"; fire($("#e-c"), "change"); ok("colour by gamma ray draws estimated GR with its held-out test", !!(await waitFor(() => $("#pe").data.some((d) => d.name === "gamma ray (estimated)") && /gAPI/.test($("#e-n").textContent), 60000)), $("#e-n").textContent.slice(0, 100)); }
   } catch (e) { R.push("ERROR " + e); }
   document.getElementById("out").textContent = R.join("\n") + "\nDONE";
 })();

@@ -1,0 +1,81 @@
+# Rules for the NCS earth model (PLAN P4.1, LOG L066). Each rule: what it says, who says it, how our data tests it.
+# status: sourced (the text is quoted from a source we hold: the Sodir lexicon in ncs.duckdb) | sourced_unverified (a standard reference
+# cited from domain knowledge; the original was not re-read in this session) | inferred (physics, no source for this exact claim).
+# Verdicts and numbers are written by se/earth/rules.py into earth_rules_report.json, never typed here.
+retrieved: 2026-11-19
+rules:
+  - id: R-ATHY
+    statement: Porosity falls with burial depth, roughly exponentially (mechanical compaction).
+    status: sourced_unverified
+    sources:
+      - {url: "https://doi.org/10.1306/3D93289E-16B1-11D7-8645000102C1865D", says: "Athy (1930), AAPG Bulletin 14: density, porosity and compaction of sedimentary rocks"}
+      - {url: "https://doi.org/10.1029/JB085iB07p03711", says: "Sclater and Christie (1980), JGR 85: North Sea sandstone phi0 0.49, c 0.27 per km; shale 0.63, 0.51"}
+    check: {type: athy_core, expect: "c > 0; c near 0.27 per km for cored (mostly sandstone) intervals"}
+    use: porosity trend in P3.2 (unit_athy)
+    guard: cores are taken in reservoirs, so the fitted curve describes cored rock, not the whole column
+  - id: R-DPHI
+    statement: Density porosity phi = (rho_matrix - rho_bulk) / (rho_matrix - rho_fluid), with a quartz matrix of 2.65 g/cm3 for sandstone.
+    status: sourced_unverified
+    sources:
+      - {url: "https://petrowiki.spe.org/Density_logging", says: "density porosity from bulk density with matrix and fluid densities"}
+    check: {type: density_vs_core, expect: "core porosity follows density porosity in sandstone units"}
+    use: physics baseline for porosity where cores are absent
+    guard: shale and heavy minerals bias it; gas lowers rho_bulk and raises apparent porosity
+  - id: R-GARDNER
+    statement: Bulk density rises with P-wave velocity, rho = 0.31 V^0.25 (rho g/cm3, V m/s).
+    status: sourced_unverified
+    sources:
+      - {url: "https://doi.org/10.1190/1.1440465", says: "Gardner, Gardner and Gregory (1974), Geophysics 39"}
+    check: {type: gardner_logs, expect: "predicted RHOB within about 0.1 g/cm3 of measured in the median"}
+    use: links sonic, density and seismic velocity (depth conversion sanity)
+    guard: an empirical average for brine-saturated sediments; not for evaporites or coal
+  - id: R-HYD
+    statement: Normal pore pressure follows a brine column of about 1.03 g/cm3 from sea level.
+    status: sourced_unverified
+    sources:
+      - {url: "https://petrowiki.spe.org/Pore_pressure", says: "normal (hydrostatic) pressure gradient of formation water, about 0.433-0.465 psi/ft"}
+    check: {type: hydrostatic, expect: "normally pressured DSTs give EMW near 1.03"}
+    use: pressure reference in P3.3 (excess over hydrostatic)
+    guard: overpressured units (common below the Cretaceous in the graben) do not follow it
+  - id: R-GEO
+    statement: The northern North Sea geothermal gradient is about 25-40 deg C per km.
+    status: sourced_unverified
+    sources:
+      - {url: "https://doi.org/10.1016/0264-8172(95)98381-E", says: "regional North Sea heat-flow and gradient compilations"}
+    check: {type: gradient_range, low: 25, high: 40}
+    use: temperature model in P3.4
+    guard: DST temperatures can read low (not fully equilibrated)
+  - id: R-BRENT
+    statement: The Brent Group is a delta system; the Ness Formation is delta or coastal plain with coals, the Etive Formation shoreface and barrier sands.
+    status: sourced
+    sources:
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/110", says: "Ness: an association of coals, shales, siltstones and very fine to medium grained sandstones ... delta plain or coastal plain deposition"}
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/35", says: "Etive: massive ... sandstones ... upper shoreface, barrier bar, mouth bar and distributary channel deposits"}
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/groups/16", says: "Brent: sandstones, siltstones and shales with subordinate coal beds; Advance and retreat of Brent Delta system"}
+    check: {type: brent_facies, expect: "coal share highest in Ness; Etive the most sand-rich Brent unit"}
+    use: sandy delta target (P6)
+    guard: lithology shares come from 60 FORCE wells; facies are inferred from lithology, not observed
+  - id: R-DRAUPNE
+    statement: The Draupne Formation is an organic-rich marine claystone with very high gamma ray (often above 100 API), a source rock and a seal.
+    status: sourced
+    sources:
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/28", says: "carbonaceous ... claystone. It is characterized by very high radioactivity (often above 100 API units) which is a function of organic carbon content ... marine environment with restricted bottom circulation and often with anaerobic conditions"}
+    check: {type: draupne_gr, expect: "median GR above 100 API and above the Heather Formation; shale share at least 0.8"}
+    use: source and seal terms of the hydrocarbon target (P6)
+    guard: interbedded sandstones lower the gamma ray locally (lexicon)
+  - id: R-CO2
+    statement: CO2 is supercritical above 31.1 deg C and 7.38 MPa, so storage needs depths where both are exceeded (dense CO2).
+    status: sourced_unverified
+    sources:
+      - {url: "https://webbook.nist.gov/cgi/cbook.cgi?ID=C124389", says: "NIST: carbon dioxide critical temperature 304.1 K, critical pressure 7.38 MPa"}
+    check: {type: co2_window, Tc: 31.1, Pc: 7.38}
+    use: CO2 storage target (P6)
+    guard: uses hydrostatic pressure and the P3.4 temperature model with their sigmas
+  - id: R-SEAL
+    statement: Hydrocarbons are retained below shale-dominated seals; units with hydrocarbons have more shale within 300 m above them than dry ones.
+    status: inferred
+    sources:
+      - {url: "https://factpages.sodir.no/strat/pageview/litho/formations/28", says: "Draupne: claystone (a seal lithology)"}
+    check: {type: seal_hc, expect: "median seal above HC units > above dry units"}
+    use: seal term of the hydrocarbon and CO2 targets (P6)
+    guard: seal thickness from the grid at 2 km; faults and seal capacity are not modelled

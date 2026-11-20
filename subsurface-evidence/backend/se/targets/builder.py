@@ -22,9 +22,9 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from se.config import DATA, OUT
+from se.config import DATA
 from se.ingest.names import norm
-from se.ingest.units import tops, wellbores, rows_in_metres
+from se.ingest.units import assign_intervals, rows_in_metres, tops, wellbores
 
 WELL_TABLES = {"wellbore_exploration": "wlbWellboreName", "wellbore_development": "wlbWellboreName"}
 # interval table -> (wellbore column, depth column in metres MD)
@@ -95,14 +95,9 @@ def text_rows(spec: dict) -> pd.DataFrame:
 
 
 def intervals(r: pd.DataFrame, w: pd.DataFrame) -> pd.DataFrame:
-    """Rows (wellbore, depth_from, depth_to, has_green) -> one unit per well x formation interval; trials = rows, successes = rows with has_green."""
+    """Rows -> intervals, assigning each trial once to formation first and group only as fallback."""
     r = rows_in_metres(r, w)  # a depth beyond total depth is read as feet; if it still does not fit, the row is dropped
-    tp = tops(w)
-    m = tp[["wellbore", "name", "level", "top", "bot"]].reset_index().rename(columns={"index": "uid"}).merge(r[["wellbore", "depth_from", "has_green"]], on="wellbore")
-    m = m[(m.depth_from >= m.top) & (m.depth_from <= m.bot)]
-    g = m.groupby("uid").agg(coverage=("has_green", "size"), n_green=("has_green", "sum"))
-    u = tp.join(g).fillna({"coverage": 0, "n_green": 0})
-    u[["coverage", "n_green"]] = u[["coverage", "n_green"]].astype(int)
+    u, _ = assign_intervals(r, tops(w))
     return u
 
 
@@ -127,6 +122,7 @@ def build(spec: dict) -> pd.DataFrame:
         r = pd.DataFrame({"wellbore": t.wellbore, "depth_from": pd.to_numeric(t[cd], errors="coerce").astype(float), "has_green": t.success}).dropna(subset=["depth_from"])
         u = intervals(r.assign(depth_to=r.depth_from), w)  # tables are in metres; the guard drops depths beyond total depth
     u["label"] = np.where(u.n_green > 0, 1, np.where(u.coverage >= 1, 0, -1)).astype(int)
-    u["unit"] = u.wellbore + " | " + u.name.astype(str)
+    if spec["mode"] == "well":
+        u["unit"] = u.wellbore + " | WELL | " + u.name.astype(str)
     u["thickness"] = u.bot - u.top
     return u.reset_index(drop=True)

@@ -47,3 +47,23 @@ TNO for F3; the Penobscot Interpretation Dataset authors (Baroni et al.); the Fa
 | Sleipner 4D (Equinor) | `data/seismic/sleipner/` | Ten 3D vintages 1994 to 2010 over the Utsira Formation CO2 injection | Same portal and licence family; see the dataset page. |
 
 Fetch: `app/fetch_data.py smeaheia` and `sleipner`. The site asks for acceptance, a country and an affiliation per download; the repo owner accepted and gave them (LOG L035).
+
+## Next Norwegian-shelf acquisitions (2026-11-19)
+
+| Candidate | Verified contents / access | Role and limits |
+|---|---|---|
+| [MSM98/2 Norwegian Sea](https://doi.org/10.1594/PANGAEA.973650) | 23 high-resolution 2D multichannel profiles, stacked and post-stack migrated SEG-Y. [File list](https://doi.pangaea.de/10.1594/PANGAEA.973650?format=html) includes individual files, sizes and checksums; PANGAEA says an account is required for downloading. | Best new source for a processed 2D section in the Norwegian Sea. Inspect one line first (e.g. `MSM98-2_P5008_mig.sgy`, 37 MB). Targets shallow margin/landslide structures, not petroleum reservoir or clay labels. Check CRS, time datum, and well overlap before placement or correlation. |
+| [UiT mid-Norway / Lofoten–Vesterålen](https://doi.org/10.18710/DWOUPL) | 62 single-channel 2D lines from five surveys across 64–69°N. CC0 1.0; DataverseNO lists unrestricted SEG-Y files, e.g. [00-001 part 1](https://dataverse.no/api/access/datafile/172935), about 7.5 MB. Published unprocessed and unmigrated. | Immediate small pilot for 2D trace ingest and regional coverage in 3D. Not comparable amplitude to migrated surveys without processing, and no validated tie demonstrated. |
+| [Diskos released 3D](https://www.sodir.no/en/facts/data-and-analyses/release-of-data/access-to-released-data/) | Members download; non-members order through Diskos Public Portal. Public inventory is not amplitude access. [Sodir names FIN13](https://www.sodir.no/aktuelt/nyheter/generelle-nyheter/2024/stort-areal-med-nye-frigitte-datasett-i-barentshavet/) as released Barents 3D. | Best route to additional NCS **3D**, but screen released post-stack products against target wells and checkshots first. Request one survey/subvolume with navigation, CRS, processing and vertical-domain metadata. Do not select FIN13 solely because it is listed. |
+| [SINTEF Johansen](https://www.sintef.no/projectweb/matmora/downloads/johansen/) | Downloadable model grids, faults, porosity/permeability properties and simulation inputs (ODbL/DbCL). No amplitude volume on this page. | Interpreted regional context and comparison model only; model properties are not new independent observations. |
+
+Acquisition gate: **target formation overlap → tied wells with directional surveys and depth/time controls → known datum, CRS and processing → disk/licence check → one small product first**. For 2D use a georeferenced curtain with along-line distance, not a 3D cube. Display new surveys as context; enable prediction only after an ablation on held-out wells or survey areas. No new binaries were downloaded for this shortlist.
+
+### Depth controls to request first
+
+The [Diskos wells catalogue](https://www.sodir.no/diskos/wells/) lists original well-path survey points and well seismic (VSP and velocity). Catalogue presence is not confirmed file access. Prioritize:
+
+- **GN1101:** Checkshots or VSP and directional survey for **32/2-1** (NPDID 5839); resolve the **32/4-1 T2** borehole and survey separately from parent site ID 2918. Request GN1101's final processing datum and workbook horizon version. These controls can test the existing time-reference conflict, not provide a new independent held-out well by themselves.
+- **TNE01:** Request the independent raw control underlying the documented **31/3-1** tie (NPDID 20). **31/3-3** (NPDID 447) is a separate candidate for a test using logs and core. Its wellhead overlaps the indexed survey, but that is not an established tie.
+
+For each package ask for shot times and corrections, receiver MD/TVD, MD and vertical reference elevations, units, datums, survey/vintage and file identifiers. Keep independent control wells out of fitting. Do not treat already depth-converted horizons, velocity maps derived from the same control wells, or releases of the same survey as external validation.

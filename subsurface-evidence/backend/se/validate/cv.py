@@ -51,11 +51,18 @@ def distance_to_train(tr: pd.DataFrame, te: pd.DataFrame) -> np.ndarray:
     return d
 
 
-def oof(units: pd.DataFrame, n_folds: int = K, **kw) -> pd.DataFrame:
-    """Out-of-fold layer contributions and variant rates for every labelled unit. Folds are whole 40 km blocks."""
+def _folds(df: pd.DataFrame, n_folds: int):
+    groups = blocks(df)
+    n = min(n_folds, len(np.unique(groups)))
+    if n < 2:
+        raise ValueError("need at least two spatial blocks for cross-validation")
+    return GroupKFold(n).split(df, groups=groups)
+
+
+def _raw_oof(units: pd.DataFrame, n_folds: int, **kw) -> pd.DataFrame:
     lab = units[units.label >= 0]
     rows = []
-    for i, (tr_i, te_i) in enumerate(GroupKFold(n_folds).split(lab, groups=blocks(lab))):
+    for i, (tr_i, te_i) in enumerate(_folds(lab, n_folds)):
         tr, te = lab.iloc[tr_i], lab.iloc[te_i]
         layers = fit_layers(tr, **kw)
         c = contributions(layers, te)
@@ -67,13 +74,44 @@ def oof(units: pd.DataFrame, n_folds: int = K, **kw) -> pd.DataFrame:
     return lab.join(pd.concat(rows))
 
 
-def calibrate(r: pd.DataFrame) -> dict:
-    """Each variant's raw logit -> calibrated rate (2 parameters, fitted on all out-of-fold units). Fair comparison: a model is not punished for overconfidence."""
+def nested_calibrate(calibration_rows: pd.DataFrame, outer_rows: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Fit on inner OOF rows only and apply to outer rows; outer labels are intentionally never read."""
+    out = outer_rows.copy()
+    params = {}
+    for n in VARIANTS:
+        p = Platt().fit(calibration_rows["l_" + n], calibration_rows.n_green, calibration_rows.coverage)
+        out["p_" + n] = p(out["l_" + n])
+        out["pr_" + n] = 1 / (1 + np.exp(-out["l_" + n]))
+        params[n] = p.params()
+    return out, params
+
+
+def oof(units: pd.DataFrame, n_folds: int = K, inner_folds: int = 3, **kw) -> pd.DataFrame:
+    """Nested OOF predictions: calibration for an outer fold uses inner OOF rows from its training fold only."""
+    lab = units[units.label >= 0]
+    rows = []
+    for i, (tr_i, te_i) in enumerate(_folds(lab, n_folds)):
+        tr, te = lab.iloc[tr_i], lab.iloc[te_i]
+        inner = _raw_oof(tr, inner_folds, **kw)
+        layers = fit_layers(tr, **kw)
+        outer = contributions(layers, te)
+        outer["p_base"] = 1 / (1 + np.exp(-outer["base"]))
+        for name, use in VARIANTS.items():
+            outer["l_" + name] = contributions(layers, te, use)["logit"]
+        outer, _ = nested_calibrate(inner, outer)
+        outer["dist_km"], outer["fold"] = distance_to_train(tr, te), i
+        rows.append(outer)
+    return lab.join(pd.concat(rows))
+
+
+def calibrate(r: pd.DataFrame, assign: bool = True) -> dict:
+    """Full stacked-OOF calibration, retained for the deployed model (not reported fold metrics)."""
     cal = {}
     for n in VARIANTS:
         p = Platt().fit(r["l_" + n], r.n_green, r.coverage)
-        r["p_" + n] = p(r["l_" + n])
-        r["pr_" + n] = 1 / (1 + np.exp(-r["l_" + n]))  # the raw rate, kept to show the overconfidence
+        if assign:
+            r["p_" + n] = p(r["l_" + n])
+            r["pr_" + n] = 1 / (1 + np.exp(-r["l_" + n]))
         cal[n] = p.params()
     return cal
 
@@ -143,21 +181,17 @@ def run(u: pd.DataFrame | None = None, out=OUT, quick: bool = False, name: str =
         return _finish(u, res, out, t0, quick)
     for ell in (5, 10, 20, 40, 80, 160, 320):
         r = oof(u, ell=ell)
-        calibrate(r)
         res["sweep_ell"].append({"ell_km": ell, **metrics(r, r["p_strat+spatial"], r.p_base)})
     for a in (3, 10, 30, 100, 300):
         r = oof(u, a=a)
-        calibrate(r)
         res["sweep_a"].append({"a_rows": a, **metrics(r, r["p_strat"], r.p_base)})
     res["sweep_k"] = []
     for k in (3, 10, 30, 100):
         r = oof(u, k=k)
-        calibrate(r)
         res["sweep_k"].append({"k_rows": k, **metrics(r, r["p_strat+spatial"], r.p_base)})
     res["sweep_C"] = []  # the log layer gets a fair try: stronger and weaker regularisation, judged on the units that have logs
     for C in (0.01, 0.03, 0.1, 0.3, 1.0):
         r = oof(u, C=C)
-        calibrate(r)
         sub = r[r.GR.notna()]
         res["sweep_C"].append({"C": C, **metrics(sub, sub["p_strat+logs"], sub.p_base), "delta_vs_strat": boot(sub, "strat+logs", "strat", n=100)})
     return _finish(u, res, out, t0, quick)
@@ -165,7 +199,7 @@ def run(u: pd.DataFrame | None = None, out=OUT, quick: bool = False, name: str =
 
 def _finish(u, res, out, t0, quick) -> dict:
     r = oof(u)
-    res["platt"] = calibrate(r)
+    res["platt"] = calibrate(r, assign=False)
     res["ablation"] = {n: metrics(r, r["p_" + n], r.p_base) for n in VARIANTS}
     sub = r[r.GR.notna()]
     res["delta"] = {"strat_over_constant": boot(r, "strat", None), "spatial_over_strat": boot(r, "strat+spatial", "strat")}

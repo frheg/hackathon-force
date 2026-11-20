@@ -10,10 +10,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
+from se.api import explore, provenance, scene, seismic, targets_api, earth
 from se.api.state import State
 from se.config import LOG_MD, PROJECT, TARGET, WORKER_URL
 from se.infer.combine import ORDER
-from se.api import explore, scene, seismic, targets_api
 from se.jobs import map_job
 
 app = FastAPI(title="subsurface-evidence", root_path=os.environ.get("ROOT_PATH", ""), docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -22,6 +22,8 @@ app.add_middleware(GZipMiddleware, minimum_size=2000)  # scene and map answers a
 app.include_router(explore.router)
 app.include_router(targets_api.router)
 app.include_router(seismic.router)
+app.include_router(provenance.router)
+app.include_router(earth.router)
 S: dict = {}
 
 
@@ -46,8 +48,8 @@ def clean(o):
 
 def layers_arg(layers: str | None, target: str = "green_clay") -> tuple:
     s = st(target)
-    use = tuple(x for x in (layers.split(",") if layers else s.default_on) if x in ORDER)
-    return use or ("strat",)
+    requested = s.default_on if layers is None else layers.split(",")
+    return tuple(x for x in requested if x in ORDER)
 
 
 @app.on_event("startup")
@@ -229,7 +231,7 @@ def formations3d(target: str = "green_clay"):
 def scene_(formations: str, surfaces: bool = True, lat_min: float = 0.0, lat_max: float = 90.0, target: str = "green_clay", res: float = 0.15, spatial: bool = True):
     """Wells (segments per unit) and smoothed surfaces for the chosen formations, plus the hotspots found in them."""
     s = st(target)
-    fs = [f for f in formations.split(",") if f][:8]
+    fs = [f for f in formations.split(",") if f][:30]  # the UI guard is 30 (MAXF)
     u = s.units[s.units.name.isin(fs) & s.units.lat.between(lat_min, lat_max)]
     if not hasattr(s, "_hot"):
         s._hot = scene.hotspots(s)

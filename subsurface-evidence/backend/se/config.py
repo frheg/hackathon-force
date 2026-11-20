@@ -15,6 +15,27 @@ WORKER_URL = os.environ.get("WORKER_URL", "")  # empty: heavy jobs run in this p
 TARGET = {"name": "green_clay_in_clay_rows", "kinds": ("glauconite", "green clay", "chlorite", "nontronite", "celadonite"), "lith": ("clay",)}
 MIN_COVERAGE = 3  # L009: described rows (of the target lithology) needed in a unit before "no mention" counts as a negative
 BLOCK_KM = 40.0  # spatial fold size, same as the depth test in the hackathon app (LOG L011)
+AREAS = {
+    "smeaheia": {
+        "title": "Smeaheia",
+        "bbox": {"lat_min": 59.9, "lat_max": 60.8, "lon_min": 3.0, "lon_max": 4.2},
+        "surveys": ("gn1101", "tne01"),
+        "use_cases": ("co2 storage", "legacy wells", "seismic context"),
+    },
+    "sleipner": {
+        "title": "Sleipner",
+        "bbox": {"lat_min": 58.0, "lat_max": 58.8, "lon_min": 1.5, "lon_max": 2.4},
+        "surveys": tuple(f"sleipner_{v}" for v in ("94p01", "94p07", "94p08", "94p10", "99p01", "01p01", "01p07", "04p07", "06p07", "08p08", "10p10", "10p11")),
+        "use_cases": ("co2 storage", "4d time lapse", "seismic context"),
+    },
+    "northern-lights": {
+        "title": "Northern Lights / Aurora-Eos",
+        "center_well": "31/5-7",
+        "radius_km": 12.0,
+        "surveys": (),
+        "use_cases": ("co2 storage", "legacy wells", "barriers"),
+    },
+}
 
 
 def device() -> str:
@@ -25,3 +46,15 @@ def device() -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
         return "cpu"
+
+# Earth-model pilot (PLAN.md, LOG L053): Horda Platform / northern Viking Graben
+PILOT = {"lat": (59.5, 61.5), "lon": (1.5, 4.5)}
+EARTH = OUT / "earth" / "pilot"  # earth-model artefacts, never committed
+
+
+def in_pilot(lat, lon):
+    """True where a point (or array of points) lies inside the pilot box."""
+    import numpy as np
+
+    la, lo = np.asarray(lat, float), np.asarray(lon, float)
+    return (la >= PILOT["lat"][0]) & (la <= PILOT["lat"][1]) & (lo >= PILOT["lon"][0]) & (lo <= PILOT["lon"][1])

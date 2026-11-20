@@ -2,10 +2,9 @@
 import json
 import time
 
-import numpy as np
 import pandas as pd
 
-from se.config import OUT, TARGET, device
+from se.config import OUT, device
 from se.evidence import REGISTRY
 from se.infer.combine import ORDER, Platt, contributions, fit_layers
 from se.knowledge import kb
@@ -19,6 +18,10 @@ def status_of(d: dict | None) -> str:
     if not d:
         return "not_built"
     return "helps" if d["p05"] > 0 else "hurts" if d["p95"] < 0 else "no_evidence"
+
+
+def default_layers(status: dict) -> list:
+    return [n for n in ORDER if status.get(n) == "helps"]
 
 
 class State:
@@ -40,8 +43,8 @@ class State:
         self.kb = kb.check(self.units) if target == "green_clay" else []
         d = self.results["delta"]
         self.status = {"strat": status_of(d["strat_over_constant"]), "spatial": status_of(d["spatial_over_strat"]), "logs": status_of(d.get("logs_over_strat_on_logs_subset")), "seismic": "not_built"}
-        # L022 policy P1: on unless it significantly hurts; seismic is not built
-        self.default_on = [n for n in ORDER if self.status[n] != "hurts"]
+        # A layer is enabled only after evidence that it helps; callers can still override explicitly.
+        self.default_on = default_layers(self.status)
         self._platt, self.loaded_seconds, self.device = {}, round(time.time() - t0, 1), device()
 
     def platt(self, use) -> Platt:
@@ -59,7 +62,6 @@ class State:
         return c
 
     def layer_info(self) -> list:
-        d = self.results
         out = []
         for n, cls in REGISTRY.items():
             lay = self.layers.get(n)

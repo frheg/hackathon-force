@@ -5,16 +5,24 @@ Weights exp(-d/ell) over training units of the same formation (never the same we
 """
 import numpy as np
 import pandas as pd
+from pyproj import Transformer
 from scipy.spatial import cKDTree
 
 from .base import logit
 from .strat import Strat
 
-KM_LAT = 110.57
+KM_LAT = 110.57  # retained for the UI-only display frame; model distances use EPSG:3035
+PROJECTED = Transformer.from_crs("EPSG:4326", "EPSG:3035", always_xy=True)
+
+
+def project(lon, lat) -> np.ndarray:
+    """EPSG:3035 equal-area coordinates in km, appropriate across the North Sea latitude range."""
+    x, y = PROJECTED.transform(np.asarray(lon, float), np.asarray(lat, float))
+    return np.c_[x, y] / 1000.0
 
 
 def xy(df: pd.DataFrame, lat0: float = 60.0) -> np.ndarray:
-    return np.c_[df.lon.to_numpy() * 111.32 * np.cos(np.radians(lat0)), df.lat.to_numpy() * KM_LAT]
+    return project(df.lon.to_numpy(), df.lat.to_numpy())
 
 
 class Spatial:

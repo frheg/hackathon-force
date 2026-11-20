@@ -1,8 +1,8 @@
-"""Diskos Detective: answers from Diskos well reports and FactPages, every claim cited, plus wellbore dossiers and the
-DISKOS-QA scorecard.
+"""Diskos Detective: cited answers from a versioned report corpus and FactPages, plus dossiers and the scorecard.
 
-The agent follows the TADI design (arXiv 2605.00060): typed tools over structured tables and report search, called
-by the model, and an answer that cites [S#] report passages and [F:table] FactPages facts.
+Report hits include exact source, document, page, wellbore, field and formation metadata. Search does not inject a
+question's QA Content; gold evidence competes in the same index as deterministic official-OCR distractors. The agent
+follows the TADI design with typed tools and citations such as [S1] and [F:tops].
 """
 
 import json
@@ -16,9 +16,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from common import DATA_DIR, ModelBusy, chat, chat_json, complete, page
-from sketches import reports, wells
+from sketches import reports, strata, wells
 
 router = APIRouter(prefix="/detective")
+router.include_router(strata.router)
 MAX_STEPS = 6
 
 TOOLS = [
@@ -98,7 +99,10 @@ class Session:
             }
             mode = "filtered" if any(ents.values()) else "hybrid"
             found = self.add(await reports.search(args.get("query", ""), k=5, mode=mode, ents=ents if any(ents.values()) else None))
-            result = "\n\n".join(f"[{p['ref']}] ({p['document']}; {', '.join(p['wellbores'])}) {p['text']}" for p in found)
+            result = "\n\n".join(
+                f"[{p['ref']}] ({p['document']}, page {p.get('page') or 'n/a'}, {p.get('source', 'gold')}; "
+                f"{', '.join(p['wellbores'])}) {p['text']}" for p in found
+            )
         elif name == "wellbore_facts":
             c = wells.card(args.get("wellbore", ""))
             result = wells.facts_text(c) if c["header"] else f"no wellbore named {args.get('wellbore')} in FactPages"
@@ -143,7 +147,9 @@ async def rag(question: str, mode: str) -> dict:
     """One-shot retrieval and answer (the scorecard's configurations); mode 'closed' answers without evidence."""
     t0 = time.time()
     found = [] if mode == "closed" else await reports.search(question, k=5, mode=mode)
-    context = "\n\n".join(f"[{p['ref']}] ({p['document']}) {p['text']}" for p in found)
+    context = "\n\n".join(
+        f"[{p['ref']}] ({p['document']}, page {p.get('page') or 'n/a'}, {p.get('source', 'gold')}) {p['text']}" for p in found
+    )
     sys = (
         "Answer the question about Norwegian wells in one to three sentences. "
         + ("Use only the passages and cite them like [S2]. Read every passage to the end; the answer is often in a "
@@ -204,7 +210,9 @@ async def dossier(name: str):
     if not c["header"]:
         raise HTTPException(404, f"no wellbore {name} in FactPages")
     found = reports.for_wellbore(name, "summary results reservoir test core drilling problems", k=8)
-    context = "\n\n".join(f"[{p['ref']}] ({p['document']}) {p['text'][:1600]}" for p in found)
+    context = "\n\n".join(
+        f"[{p['ref']}] ({p['document']}, page {p.get('page') or 'n/a'}, {p.get('source', 'gold')}) {p['text'][:1600]}" for p in found
+    )
     try:
         text = await chat(
             [

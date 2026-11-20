@@ -9,7 +9,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 from scipy.stats import norm
 
-from se.evidence.spatial import KM_LAT
+from se.evidence.spatial import KM_LAT, project
 from se.jobs import map_job
 
 LAT0, LON0, R_KM, MIN_WELLS, MIN_ROWS = 61.0, 3.0, 20.0, 4, 80
@@ -42,7 +42,9 @@ def surface(state, formation: str, lat_min: float = 0.0, lat_max: float = 90.0, 
     lat = np.arange(tr.lat.min() - pad, tr.lat.max() + pad + 1e-9, res)
     lon = np.arange(tr.lon.min() - 2 * pad, tr.lon.max() + 2 * pad + 1e-9, res * 2)
     LA, LO = np.meshgrid(lat, lon, indexing="ij")
-    P, Q = xy(LA.ravel(), LO.ravel()), xy(tr.lat, tr.lon)
+    P, Q = project(LO.ravel(), LA.ravel()), project(tr.lon, tr.lat)
+    centre = Q.mean(axis=0)
+    P, Q = P - centre, Q - centre
     sp, strat = s.layers["spatial"], s.layers["strat"]
     pf = strat.table[formation][0] if formation in strat.table else strat.p0
     t = map_job.weights(P, Q, tr.n_green.to_numpy(float), tr.coverage.to_numpy(float), sp.ell, dev)
@@ -72,7 +74,10 @@ def hotspots(state) -> list:
     for f, g in lab.groupby("name"):
         if len(g) < 30 or g.wellbore.nunique() < 15:
             continue
-        P, pf = xy(g.lat, g.lon), g.n_green.sum() / g.coverage.sum()
+        P, display = project(g.lon, g.lat), xy(g.lat, g.lon)
+        centre = P.mean(axis=0)
+        P = P - centre
+        pf = g.n_green.sum() / g.coverage.sum()
         if not 0 < pf < 1:
             continue
         tree, cov, ng, wid = cKDTree(P), g.coverage.to_numpy(), g.n_green.to_numpy(), g.wellbore.to_numpy()
@@ -94,7 +99,7 @@ def hotspots(state) -> list:
             sub = with_depth_ref(g.iloc[idx])
             rate = green / rows
             eff = (rows / w) / (g.coverage.sum() / g.wellbore.nunique())
-            out.append({"id": f"{f}#{len(taken)}", "formation": f, "kind": kind, "x": round(float(P[i][0]), 1), "y": round(float(P[i][1]), 1), "lat": float(g.lat.iloc[i]), "lon": float(g.lon.iloc[i]),
+            out.append({"id": f"{f}#{len(taken)}", "formation": f, "kind": kind, "x": round(float(display[i][0]), 1), "y": round(float(display[i][1]), 1), "lat": float(g.lat.iloc[i]), "lon": float(g.lon.iloc[i]),
                         "radius_km": R_KM, "top": float(sub.top.median()), "bot": float(sub.bot.median()), "kb": float(sub.kb.median()) if sub.kb.notna().any() else 25.0, "wd": float(sub.wd.median()) if sub.wd.notna().any() else 0.0, "wells": w, "rows": rows, "green": green, "rate": round(rate, 4), "formation_rate": round(float(pf), 4),
                         "lift": round(rate / pf, 2), "phi": round(phi, 2), "p": float(p), "p_adj": float(min(1.0, p * n_tests)), "tests": n_tests, "effort": round(float(eff), 2),
                         "units": sub.unit.head(30).tolist(),
