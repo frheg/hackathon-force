@@ -585,6 +585,10 @@ const PAGES = {
         if (st.map.has("faults")) line(m.faults.x, m.faults.y, "faults", "#b5442c", 2.5);
         if (st.map.has("elements")) line(m.elements.x, m.elements.y, "elements", "#5b7fa6", 1.5, "dash");
         if (st.map.has("names")) { const n = m.element_names.filter((e) => inb(e.x, e.y)); out.push({ type: "scatter3d", mode: "text", x: n.map((e) => e.x), y: n.map((e) => e.y), z: n.map(() => 0), text: n.map((e) => e.name), textfont: { size: 10, color: "#5b7fa6" }, meta: { hl: "map:names" }, name: "structural element names", hovertext: n.map((e) => `${e.name}: ${e.kind}`), hoverinfo: "text", showlegend: false }); } });
+      $("#plug-legend")?.remove();  // a small key for Jeham's markers, only while his layer is on
+      if (st.map.has("plug")) $(".plotwrap")?.insertAdjacentHTML("beforeend", `<div id="plug-legend" class="plug-legend">
+        <div><span style="color:#1a9850">●</span> pass, on its own logs</div><div><span style="color:#1a9850">○</span> pass, taken from the nearest log well (≤ 10 km)</div>
+        <div><span style="color:#d73027">●</span> fail, on its own logs</div><div><span style="color:#d73027">○</span> fail, taken from the nearest log well (≤ 10 km)</div></div>`);
       if (st.map.has("plug")) {  // Jeham's log-level screen (his engine, unchanged): solid = judged on the well's own logs, open = inherited
         const J = await get("plug", () => api("earth/jeham/wells").catch(() => null));
         if (J) { const COL = { pass: "#1a9850", fail: "#d73027" };

@@ -126,3 +126,5 @@ label.lay:hover{background:var(--faint)}
 .row.presets{flex-wrap:wrap;gap:4px}
 .row.presets .btn{font-size:12px;padding:2px 8px}
 .subnav.side{margin:4px 0 8px;display:flex;flex-wrap:wrap;gap:6px}
+.plug-legend{position:absolute;right:12px;bottom:12px;background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:6px 10px;font-size:12px;line-height:1.5;z-index:5;pointer-events:none}
+.plug-legend span{font-size:14px;margin-right:4px}
