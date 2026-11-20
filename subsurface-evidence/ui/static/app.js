@@ -581,7 +581,7 @@ const PAGES = {
         for (let lo = -10; lo <= 40; lo += ALL ? 5 : 2) { const [a, b] = proj(Array.from({ length: 61 }, (_, i) => [lo, 54 + i * 0.4])); xs.push(...a); ys.push(...b); }
         line(xs, ys, "grid", css("--rule"), 1); }
       const MP = await Promise.all(REG.map((r) => get("map|" + r, () => ea("map", r).catch(() => null))));
-      MP.filter(Boolean).forEach((m) => {
+      MP.filter((m) => m && m.faults).forEach((m) => {
         if (st.map.has("faults")) line(m.faults.x, m.faults.y, "faults", "#b5442c", 2.5);
         if (st.map.has("elements")) line(m.elements.x, m.elements.y, "elements", "#5b7fa6", 1.5, "dash");
         if (st.map.has("names")) { const n = m.element_names.filter((e) => inb(e.x, e.y)); out.push({ type: "scatter3d", mode: "text", x: n.map((e) => e.x), y: n.map((e) => e.y), z: n.map(() => 0), text: n.map((e) => e.name), textfont: { size: 10, color: "#5b7fa6" }, meta: { hl: "map:names" }, name: "structural element names", hovertext: n.map((e) => `${e.name}: ${e.kind}`), hoverinfo: "text", showlegend: false }); } });
@@ -611,12 +611,12 @@ const PAGES = {
       const tr = [];
       D.forEach(([S], ri) => S.surfaces.filter((h) => st.show.has(h.name)).forEach((h) => { const c = gcol(h.name); tr.push({ type: "surface", x: S.x, y: S.y, z: h.z.map((r) => r.map((v) => (v == null ? null : -v))), customdata: h.sd.map((r, a) => r.map((v, b) => [v, h.near_km[a][b]])), surfacecolor: h.z.map((r) => r.map(() => 0)), cmin: 0, cmax: 1,
         colorscale: [[0, c], [1, c]], showscale: false, opacity: 0.45, name: h.name, meta: { hl: h.name, pick: "surface", region: REG[ri] }, showlegend: false, hovertemplate: `estimated ${esc(h.name)}${ALL ? ` (${esc(REG[ri])})` : ""}: %{z:.0f} m (signed TVDSS)<br>± %{customdata[0]:.0f} m (1 sd); nearest well pick %{customdata[1]:.1f} km<extra></extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } }); }));
-      if (st.gc) { const G = (await Promise.all(REG.map((r) => get("gc|" + r, () => api("earth/greenclay", { region: r, step: ALL ? 3 : 2 }).catch(() => null))))).filter(Boolean); if (my !== st.seq) return;
+      if (st.gc) { const G = (await Promise.all(REG.map((r) => get("gc|" + r, () => api("earth/greenclay", { region: r, step: ALL ? 3 : 2 }).catch(() => null))))).filter((g) => g && g.top); if (my !== st.seq) return;  // a region without the surface answers 404 with a body, not data
         G.forEach((g) => [["top", 0.75], ["base", 0.35]].forEach(([k, op]) => tr.push({ type: "surface", x: g.x, y: g.y, z: g[k].map((r) => r.map((v) => (v == null ? null : -v))), customdata: g.thick, surfacecolor: g[k].map((r) => r.map(() => 0)), cmin: 0, cmax: 1,
           colorscale: [[0, "#7a9a3a"], [1, "#7a9a3a"]], showscale: false, opacity: op, name: `Green Clay ${k}`, meta: { hl: "greenclay" }, showlegend: false, lighting: { ambient: 0.85, diffuse: 0.3 },
           hovertemplate: `Green Clay ${k}: %{z:.0f} m (TVDSS)<br>thickness %{customdata:.0f} m<br>${esc(g.relation)}<extra>Nature's Plug relation</extra>` }))); }
       const bins = st.fade ? [[0.6, 1.01, 0.95, "well supported"], [0.3, 0.6, 0.5, "some support"], [-1, 0.3, 0.15, "little support"]] : [[-1, 1.01, 0.85, "cells"]];
-      const prop = async (name, k) => { const P = (await Promise.all(REG.map((r) => get(k + "|" + r, () => ea("property", r, { name, limit: lim }).catch(() => null))))); return P.map((p, ri) => p && { ...p, ri }).filter(Boolean); };
+      const prop = async (name, k) => { const P = (await Promise.all(REG.map((r) => get(k + "|" + r, () => ea("property", r, { name, limit: lim }).catch(() => null))))); return P.map((p, ri) => p && p.x && { ...p, ri }).filter(Boolean); };  // regions without the property answer 404 with a body
       const join = (P, f) => P.flatMap((p) => (f === "customdata" ? p.cell.map((c, i) => [c, p.unit[i], p.sd?.[i], p.ri]) : p[f]));  // one list over the regions; customdata = cell, unit, sd, region
       const PC = { po: ["porosity", "porosity (estimated)", 0, 35, [[0, "#3b2c1a"], [0.5, "#c9a54a"], [1, "#fff3b0"]], "%", (G) => `Porosity between wells, sigma ${G.test?.sigma_pct} points (held-out error of the P3.2 model).`],
         cc: ["co2_capacity", "CO2 capacity", 0, null, [[0, "#e8f1f7"], [0.4, "#5aa4c8"], [1, "#0b3a5d"]], "kt", (G) => `Expected CO2 storage capacity per cell (kt) at the median efficiency (2 %), weighted by P(reservoir, dense CO2, seal, no overpressure).`] };
@@ -651,7 +651,7 @@ const PAGES = {
         tr.push({ type: "scatter3d", mode: "markers", x: wellMarkers.map((m) => m.head[0]), y: wellMarkers.map((m) => m.head[1]), z: wellMarkers.map((m) => -m.head[2]),
           text: wellMarkers.map((m) => esc(m.w.name)), marker: { size: 4, color: "#e0218a", symbol: "diamond" }, name: "well evidence", meta: { pick: "well", hl: "wells" }, hovertemplate: "%{text}<extra>well evidence</extra>" }); }
       if (st.obs && st.t !== "co2_storage" && st.t !== "chance_of_success") {  // backtracking: what the wells found, at vertical depth, coloured like the cells
-        const O = (await Promise.all(REG.map((r) => get(["o", r, drawnTarget].join("|"), () => ea("observed", r, { t: drawnTarget }).catch(() => null))))).filter(Boolean); if (my !== st.seq) return;
+        const O = (await Promise.all(REG.map((r) => get(["o", r, drawnTarget].join("|"), () => ea("observed", r, { t: drawnTarget }).catch(() => null))))).filter((o) => o && o.x);  // 404 bodies are not data if (my !== st.seq) return;
         const ox = [], oy = [], oz = [], oc = [], ot = [];
         O.forEach((o) => o.x.forEach((x, i) => { ox.push(x, x, null); oy.push(o.y[i], o.y[i], null); oz.push(-o.top[i], -o.base[i], null); oc.push(o.ev[i], o.ev[i], o.ev[i]);
           const h = `${o.wellbore[i]} · ${o.unit[i]}<br>observed: ${o.ev[i] === 1 ? "yes" : o.ev[i] === 0 ? "no" : (o.ev[i] * 100).toFixed(0) + " % of records"} (evidence weight ${o.w[i]})<br>${o.top[i]}–${o.base[i]} m TVDSS`; ot.push(h, h, h); }));
@@ -777,7 +777,7 @@ const PAGES = {
       const seq = st.seq + 1;
       return drawScene().catch((err) => {
         if (!live() || seq !== st.seq) return;
-        $("#e-n").textContent = `Scene not updated: ${err.message}`;
+        $("#e-n").textContent = `Scene not updated: ${err.message}`; console.warn("scene", err);
       });
     };
     const setG = (a) => { st.show = new Set(a.filter((g) => groups.includes(g))); $$("[data-g]").forEach((c) => (c.checked = st.show.has(c.dataset.g))); draw(); };
