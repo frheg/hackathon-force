@@ -22,7 +22,7 @@ NK_MAX = 400
 def build() -> dict:
     s = np.load(EARTH / "surfaces.npz")
     names, level, M = list(s["names"]), list(s["level"]), s["mean"].astype(np.float64)
-    from se.earth.shelf import mask
+    from se.earth.shelf import BLOCKS, mask
 
     inside = s["inside"] & mask(s["x"], s["y"])  # region box AND the offshore NCS (licence blocks): no cells on land or foreign shelves
     pres = s["presence"]
@@ -89,7 +89,7 @@ def build() -> dict:
            "gaps_or_overlaps": gaps, "roundtrip_tested": tested, "roundtrip_failures": bad, "volume_km3": vol,
            "median_layer_thickness_m": round(float(np.median(dz[:, inside][dz[:, inside] > 0])), 2)}
     (EARTH / "grid_report.json").write_text(json.dumps(out, indent=1))
-    manifest.write(EARTH / "grid.npz", [EARTH / "surfaces.npz", EARTH / "column.json", EARTH / "tops.parquet"], {"dz_m": DZ, "nk_max": NK_MAX})
+    manifest.write(EARTH / "grid.npz", [EARTH / "surfaces.npz", EARTH / "column.json", EARTH / "tops.parquet", BLOCKS], {"dz_m": DZ, "nk_max": NK_MAX})
     return out
 
 

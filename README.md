@@ -1,13 +1,20 @@
-# hackathon-force
+# Subsurface Evidence / Subsurface Studio
 
-**Subsurface Studio**: ten tools for the FORCE VibeCode Hackathon (Stavanger, 19 to 20 November 2026, "create your
-favourite oil and gas app in 2 days"). Each tool takes one slow, expensive task in exploration, drilling, production or
-late life, runs it on public Norwegian Continental Shelf data, and uses a language model only where reading,
-cross-checking or writing is the bottleneck. Research behind the choices: [docs/reports](docs/reports/) (the ranked
-report), [docs/research_notes](docs/research_notes/), [docs/research.md](docs/research.md) (the event) and
-[docs/oil-gas-llms.md](docs/oil-gas-llms.md) (domain models and GPU profiles) and [docs/data-guide.md](docs/data-guide.md) (every dataset and term explained).
+**Subsurface Evidence** is the main project: a 3D model of the Norwegian Continental Shelf that links predictions back to wells, logs, core plugs, reports and seismic interpretations. It keeps measured evidence, interpretations, model estimates and unknowns separate. **Subsurface Studio** also contains the original FORCE VibeCode Hackathon tools (Stavanger, 19 to 20 November 2026).
 
-## The tools
+## Start in 3D
+
+Open **Subsurface model → Explore Smeaheia**. Click a well, horizon or cell to inspect its sources, depth reference and model support. **Strata Desk** answers questions using the selected scene and cites its sources. Start with the [local run guide](subsurface-evidence/README.md).
+
+| What | Current state |
+|---|---|
+| **Horda demo** | Frozen build `f46ffd5abca4`: 186,538 model cells, modelled porosity, a legacy-well proximity screen, and a versioned export. Ready locally; not activated on k3s. |
+| **Smeaheia seismic** | Time-domain context and separately labelled published picks. No independently verified time-to-depth tie; the first seismic sample is not the seabed. |
+| **Porosity** | Measured logs improved predictions of held-out core plugs. Adding rock-physics transforms to those logs showed no reliable extra gain. The template does not feed production probabilities. Neither test validates undrilled cells. |
+
+[Model plan](subsurface-evidence/PLAN.md) · [Experiment log](subsurface-evidence/LOG.md) · [Data guide](docs/data-guide.md) · [Seismic sources and missing controls](docs/seismic-data.md)
+
+## Original Studio tools
 
 | Path | Tool | What it does | Measured |
 |---|---|---|---|
@@ -30,9 +37,7 @@ matched by a name normaliser; every request has input limits; model errors and a
 
 ## Data
 
-About 125 GB in `data/`, not in git. Everything is public. The datasets the organisers sent by mail (17 November
-2026) are kept apart in `data/official/`, as the most official source; the ones found before the event stay in
-`data/`.
+Raw data, indexes and generated model builds live in `data/`, not in Git. Some sources require licence acceptance or sign-in. Datasets supplied by the organisers are kept separately in `data/official/`.
 
 **From the organisers** (`data/official/`, all CC BY 4.0, Zenodo):
 
@@ -63,7 +68,7 @@ More public seismic, including what needs your own sign-in (Volve, Smeaheia, Sle
 Zenodo serves each connection at 2 to 3 MB/s, so large files come down as 64 MB pieces over ten connections
 (about 20 MB/s); an interrupted download resumes, and every file is checked against Zenodo's md5.
 
-## Build and run
+## Build and run the original Studio tools
 
 From `app/`, once:
 
@@ -108,6 +113,7 @@ The answer scorecard (GPU time, about four model calls per question per mode):
                            train_logs.py, atlas.py (the data dashboard and its profiles), atlas_seis.py (its seismic explorer)
     app/pages/             one HTML page per tool, style.css and shell.js shared (plain JS; Plotly and Leaflet)
     app/tests/             pytest
+    subsurface-evidence/   3D model, evidence API, UI, model plan and experiment log
     data/                  datasets found before the event, indexes and caches (ignored by git)
     data/official/         the datasets the organisers sent
     docs/                  research, the report, model notes
@@ -116,7 +122,7 @@ The answer scorecard (GPU time, about four model calls per question per mode):
 
 - DiskosQA chunks or Sodir's JSON well documents: write them as `data/diskosqa/chunks.parquet` (chunk_id, text,
   doc_name, wellbores, fields, formations) and rerun `sketches.reports`.
-- Wells (LAS): map curve names to the FORCE 2020 ones and append to `train.csv` / `hidden_test.csv`.
+- Wells (LAS): map curves and depth units explicitly, and keep new wells as separately tracked inputs. Do not edit the FORCE benchmark or use its hidden test labels.
 - Seismic (SEG-Y): write a numpy cube (inline, trace, sample) next to the F3 files, add it to `CUBES` in
   `sketches/seismic.py`, rebuild.
 - Azure OpenAI or other models: set `LLM_URL` and `LLM_MODEL`.

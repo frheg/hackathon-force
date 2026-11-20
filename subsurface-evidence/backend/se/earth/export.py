@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from se.config import EARTH, REGION
+from se.earth import manifest
 
 UNDEF_IRAP, UNDEF_ZMAP = 9999900.0, 1e30
 PROPS = {"P_HC": "hydrocarbons", "P_OIL": "oil", "P_GAS": "gas", "P_RES": "reservoir", "P_OVERP": "overpressure", "P_CO2": "co2_storage", "P_COS": "chance_of_success"}
@@ -21,14 +22,16 @@ README = """Subsurface evidence earth model, region {region}. CRS EPSG:3035 (ETR
 Surfaces: IRAP classic ASCII (.irap) and ZMAP+ (.zmap), mean depth and 1-sigma per horizon, on the {step} km lattice.
 Grid: zones.grdecl, a corner-point grid with one layer per group (SPECGRID, COORD, ZCORN, ACTNUM) and cell properties:
   {props}
-  PORO porosity (fraction), NTG sand share. Probabilities are P(event | a well is drilled here), each tested on held-out wells
-  (report.json in the API, LOG.md L069-L076). Values are thickness-weighted means of the units (formations) inside a zone cell.
-Sources: Sodir FactPages and FactMaps (NLOD), FORCE 2020, RealPore, Smeaheia (Equinor, Gassnova), NOAA WOA23, NIST.
+  PORO modelled porosity (fraction), NTG modelled sand share. Values are thickness-weighted means over units inside a zone cell.
+  Cells with no contributing model unit are inactive (ACTNUM=0). Disregard property placeholders in inactive cells.
+  P_CO2 and P_COS are screening scores, not calibrated probabilities. Other P_* values are conditional on where wells were drilled.
+  This is a screening export, not a simulator-ready model.
+Sources: Sodir FactPages and FactMaps (NLOD), FORCE 2020, RealPore (GeoProvider, CC BY 4.0), Smeaheia (Equinor, Gassnova), NOAA WOA23, NIST.
 """
 
 
-def _lattice():
-    s = np.load(EARTH / "surfaces.npz")
+def _lattice(root=EARTH):
+    s = np.load(root / "surfaces.npz")
     return s, np.asarray(s["x"], float) * 1000, np.asarray(s["y"], float) * 1000
 
 
@@ -54,8 +57,8 @@ def _kw(name, v, fmt="{:.4f}"):
     v = np.asarray(v).ravel(); return f"{name}\n" + "\n".join(" ".join(fmt.format(a) for a in v[k:k + 8]) for k in range(0, len(v), 8)) + "\n/\n\n"
 
 
-def grdecl() -> tuple[str, dict]:
-    g = np.load(EARTH / "grid.npz"); zb = g["zb"].astype(np.float64); zone = g["zone"]; zones = [str(z) for z in g["zones"]]
+def grdecl(*, root=EARTH) -> tuple[str, dict]:
+    g = np.load(root / "grid.npz"); zb = g["zb"].astype(np.float64); zone = g["zone"]; zones = [str(z) for z in g["zones"]]
     x, y = np.asarray(g["x"], float) * 1000, np.asarray(g["y"], float) * 1000; ny, nx = zb.shape[1:]
     used = [k for k in range(len(zones)) if (zone == k).any()]; nz = len(used)
     first = {k: int(np.argmax(zone == k)) for k in used}; last = {k: int(len(zone) - 1 - np.argmax(zone[::-1] == k)) for k in used}
@@ -69,43 +72,62 @@ def grdecl() -> tuple[str, dict]:
             c = _corners(s)
             zc[kk, f, 0::2, 0::2], zc[kk, f, 0::2, 1::2], zc[kk, f, 1::2, 0::2], zc[kk, f, 1::2, 1::2] = c[:-1, :-1], c[:-1, 1:], c[1:, :-1], c[1:, 1:]
     zc = np.maximum.accumulate(zc.reshape(nz * 2, 2 * ny, 2 * nx), axis=0)  # no crossing faces after averaging to the corners
-    act = ((bots - tops) > 0.5) & g["inside"][None]
-    C = pd.read_parquet(EARTH / "targets" / "cells.parquet"); zidx = {zones[k]: kk for kk, k in enumerate(used)}
+    geometry = ((bots - tops) > 0.5) & g["inside"][None]
+    C = pd.read_parquet(root / "targets" / "cells.parquet"); zidx = {zones[k]: kk for kk, k in enumerate(used)}
     zk = C.group.map(zidx).fillna(-1).astype(int).to_numpy(); ok = zk >= 0; flat = (zk * ny + C.j.to_numpy()) * nx + C.i.to_numpy()
     w = np.bincount(flat[ok], C.thick.to_numpy()[ok], minlength=nz * ny * nx)
+    act = geometry & (w.reshape(geometry.shape) > 0)
     def prop(v):
         s = np.bincount(flat[ok], (v * C.thick.to_numpy())[ok], minlength=nz * ny * nx); return np.where(w > 0, s / np.maximum(w, 1e-9), 0.0)
     out = ["-- subsurface-evidence earth model, region %s: zone grid (one layer per group). EPSG:3035 m, depth TVDSS m.\n" % REGION, "-- zones: " + ", ".join(zones[k] for k in used) + "\n\n",
            f"SPECGRID\n{nx} {ny} {nz} 1 F\n/\n\n", _kw("COORD", coord, "{:.2f}"), _kw("ZCORN", zc, "{:.2f}"), _kw("ACTNUM", act.astype(int), "{:d}")]
     have = {}
     for kw, t in PROPS.items():
-        p = EARTH / "targets" / f"{t}.npz"
+        p = root / "targets" / f"{t}.npz"
         if p.exists():
             out.append(_kw(kw, prop(np.load(p)["p"].astype(float)), "{:.4f}")); have[kw] = t
-    if (EARTH / "targets" / "porosity.npz").exists():
-        out.append(_kw("PORO", prop(np.load(EARTH / "targets" / "porosity.npz")["value"].astype(float) / 100), "{:.4f}")); have["PORO"] = "porosity"
+    if (root / "targets" / "porosity.npz").exists():
+        out.append(_kw("PORO", prop(np.load(root / "targets" / "porosity.npz")["value"].astype(float) / 100), "{:.4f}")); have["PORO"] = "porosity"
     if "sand" in C:
         out.append(_kw("NTG", prop(C.sand.fillna(0).to_numpy(float)), "{:.4f}")); have["NTG"] = "sand share"
-    return "".join(out), {"nx": int(nx), "ny": int(ny), "nz": nz, "zones": [zones[k] for k in used], "active_cells": int(act.sum()), "properties": have}
+    return "".join(out), {"nx": int(nx), "ny": int(ny), "nz": nz, "zones": [zones[k] for k in used], "active_cells": int(act.sum()),
+                           "geometry_cells_without_unit_rows": int((geometry & ~act).sum()), "properties": have}
 
 
-def build(kind: str = "all") -> bytes:
+def inputs(root, kind: str) -> list:
+    paths = [root / "surfaces.npz", root / "grid.npz"]
+    if kind in ("grid", "all"):
+        d = root / "targets"
+        paths += [d / "cells.parquet"]
+        paths += [p for t in (*PROPS.values(), "porosity") if (p := d / f"{t}.npz").exists()]
+    return paths
+
+
+def build(kind: str = "all", *, root=EARTH) -> bytes:
     """A zip of the export (kind: surfaces, grid or all); also written to <EARTH>/export/."""
-    s, x, y = _lattice(); buf = io.BytesIO(); meta = {}
+    if kind not in {"all", "surfaces", "grid"}:
+        raise ValueError(f"unknown export kind: {kind}")
+    dependencies = inputs(root, kind)
+    s, x, y = _lattice(root); buf = io.BytesIO(); meta = {}
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         if kind in ("surfaces", "all"):
+            with np.load(root / "grid.npz") as g:
+                mask = s["inside"] & g["inside"]
             for k, n in enumerate(s["names"]):
                 nm = str(n).replace(" ", "_").replace("/", "-")
                 for what, a in (("depth", s["mean"][k]), ("sd", s["sd"][k])):
-                    a = np.where(s["inside"], a, np.nan)
+                    a = np.where(mask, a, np.nan)
                     z.writestr(f"surfaces/{nm}_{what}.irap", irap(a, x, y)); z.writestr(f"surfaces/{nm}_{what}.zmap", zmap(a, x, y, f"{nm}_{what}"))
             meta["surfaces"] = len(s["names"])
         if kind in ("grid", "all"):
-            txt, gm = grdecl(); z.writestr("grid/zones.grdecl", txt); meta["grid"] = gm
-        step = json.loads((EARTH / "run_report.json").read_text()).get("box", {}).get("step_km", "?") if (EARTH / "run_report.json").exists() else "?"
-        z.writestr("README.txt", README.format(region=REGION, step=step, props=", ".join(f"{k} P({v})" for k, v in PROPS.items())))
+            txt, gm = grdecl(root=root); z.writestr("grid/zones.grdecl", txt); meta["grid"] = gm
+        step = (x[1] - x[0]) / 1000
+        z.writestr("README.txt", README.format(region=REGION, step=f"{step:g}", props=", ".join(f"{k}: {v}" for k, v in PROPS.items())))
         z.writestr("export.json", json.dumps(meta, indent=1))
-    data = buf.getvalue(); (EARTH / "export").mkdir(exist_ok=True); (EARTH / "export" / f"{REGION}_{kind}.zip").write_bytes(data)
+    data = buf.getvalue(); (root / "export").mkdir(exist_ok=True)
+    path = root / "export" / f"{REGION}_{kind}.zip"
+    path.write_bytes(data)
+    manifest.write(path, dependencies, {"kind": kind}, {"output_sha256": manifest.sha256(path)})
     return data
 
 

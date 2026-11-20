@@ -41,15 +41,24 @@ def rho_co2(T, P) -> np.ndarray:
     return f(np.c_[np.clip(np.ravel(T), 0, 200), np.clip(np.ravel(P), 1, 80)]).reshape(np.shape(T))
 
 
-def porosity(C: pd.DataFrame) -> tuple[np.ndarray, float]:
+def porosity(C: pd.DataFrame, *, root=EARTH) -> tuple[np.ndarray, float]:
     from se.earth.poroperm import Model
 
-    r = json.loads((EARTH / "poroperm_report.json").read_text()); m = Model(r.get("adopted_trend", "athy")).fit(pd.read_parquet(EARTH / "poroperm_wells.parquet"))
+    r = json.loads((root / "poroperm_report.json").read_text()); m = Model(r.get("adopted_trend", "athy")).fit(pd.read_parquet(root / "poroperm_wells.parquet"))
     phi = np.empty(len(C))
     for u, ix in C.groupby("unit").groups.items():
         q = C.loc[ix]; k = C.index.get_indexer(ix)
         phi[k] = m.predict(q[["x", "y"]].to_numpy(), q.zb.to_numpy(), u, "unit_athy", q.T_C.to_numpy())[0]
     return np.clip(phi, 0, 45), float(r["sigma_phi_pct"])
+
+
+def write_porosity(C: pd.DataFrame, *, root=EARTH) -> tuple[np.ndarray, float]:
+    phi, sigma = porosity(C, root=root)
+    path = root / "targets/porosity.npz"
+    atomic.savez(path, value=phi.astype(np.float32), sd=np.full(len(C), sigma, np.float32))
+    manifest.write(path, [root / p for p in ("targets/cells.parquet", "poroperm_report.json", "poroperm_wells.parquet")],
+                   {}, {"output_sha256": manifest.sha256(path)})
+    return phi, sigma
 
 
 def realise(C, phi, sd_phi, rho, w, area, ntg_sd=NTG_SD, th_frac=0.5, eff=(E_P10, E_P50, E_P90), n=N_REAL) -> tuple[np.ndarray, pd.Index]:
@@ -82,8 +91,7 @@ def inputs(C):
 
 def build() -> dict:
     C = pd.read_parquet(OUT_T / "cells.parquet")
-    phi, sd_phi = porosity(C)
-    atomic.savez(OUT_T / "porosity.npz", value=phi.astype(np.float32), sd=np.full(len(C), sd_phi, np.float32))
+    phi, sd_phi = write_porosity(C)
     area, rho, w = inputs(C); th, ntg = C.thick.to_numpy(), np.clip(C.sand.fillna(0).to_numpy(), 0, 1)
     cap, units = realise(C, phi, sd_phi, rho, w, area); uid = pd.factorize(C.unit)[0]; nu = len(units)
     bulk = np.bincount(uid, area * th, minlength=nu); pore = np.bincount(uid, area * th * ntg * phi / 100, minlength=nu)

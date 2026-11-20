@@ -553,16 +553,10 @@ def checks_co2(C, p, lg=None) -> dict:
 
 
 def build(targets=("hydrocarbons", "oil", "gas", "reservoir", "overpressure", "green_clay", "calcareous_clay", "sandy_delta")) -> dict:
-    """All targets, written into a staging folder that replaces <EARTH>/targets at the end (P12.4): the API never sees the cell table of one
-    run beside the target arrays of another. Outputs of later steps (gamma, volumes) are carried over only if they match the new grid."""
+    """Replace scratch targets. Regenerate gamma ray and volumes after a target rebuild."""
     global OUT_T
-    final = EARTH / "targets"; n_new = len(cells())
-    def still_fits(p):
-        if p.suffix != ".npz":
-            return p.name.startswith(("gamma_ray", "co2_capacity")) and p.suffix == ".json"
-        z = np.load(p); k = "p" if "p" in z else "value"
-        return k in z and len(z[k]) == n_new
-    with atomic.staged(final, keep=still_fits) as stage:
+    final = EARTH / "targets"
+    with atomic.staged(final) as stage:
         OUT_T = stage
         try:
             rep = _build(targets)
@@ -570,6 +564,9 @@ def build(targets=("hydrocarbons", "oil", "gas", "reservoir", "overpressure", "g
             OUT_T = final
     manifest.write(final / "cells.parquet", [EARTH / "grid.npz", EARTH / "surfaces.npz", EARTH / "fluids.parquet", EARTH / "poroperm_wells.parquet", EARTH / "pressure_obs.parquet",
                                              EARTH / "lithology_wells.parquet", OUT / "units.parquet"], {"ell_km": ELL, "k_unit": K_UNIT, "k_nb": K_NB, "n_mc": N_MC})
+    from se.earth.factors import record_legacy
+
+    record_legacy(final / "legacy_wells.npz", EARTH)
     return rep
 
 

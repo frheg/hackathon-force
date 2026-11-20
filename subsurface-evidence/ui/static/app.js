@@ -379,7 +379,21 @@ const PAGES = {
     const RG = await api("earth/regions"); region = region || "pilot";
     const RNAME = (id) => RG.find((r) => r.id === id)?.short || id.replace(/_/g, " ");
     const built = RG.filter((r) => r.built), ALL = region === "all" && built.length > 1, REG = ALL ? built.map((r) => r.id) : [region === "all" ? "pilot" : region];
-    const [MS, SV] = await Promise.all([Promise.all(REG.map((r) => api("earth/meta", { region: r }))), api("seismic/surveys").catch(() => [])]); if (!live()) return;
+    const listedBuild = (r) => RG.find((v) => v.id === r)?.build || "legacy";
+    const [MS, SV] = await Promise.all([Promise.all(REG.map((r) => api("earth/meta", { region: r, build: listedBuild(r) }))), api("seismic/surveys").catch(() => [])]); if (!live()) return;
+    if (MS.some((m) => !m.horizons)) throw new Error("Earth build unavailable. Reload the view.");
+    const build = (r) => MS[REG.indexOf(r)]?.build || "legacy";
+    const query = (r) => ({ region: r, build: build(r) });
+    const href = (path, r) => `api/earth/${path}?${new URLSearchParams(query(r))}`;
+    const ea = async (path, r, args = {}) => {
+      const d = await api("earth/" + path, { ...args, ...query(r) });
+      if (d.detail) throw new Error(typeof d.detail === "string" ? d.detail : "Invalid Earth request.");
+      if (Object.hasOwn(d, "build") && (d.build || "legacy") !== build(r)) throw new Error("Scene build mismatch. Reload the view.");
+      return d;
+    };
+    const buildText = (r) => build(r) === "legacy" ? "legacy, not frozen" : `build ${build(r)}`;
+    const hasPilot = REG.includes("pilot");
+    const smeaheia = hasPilot && SV.find((s) => s.id === "gn1101");
     const LN = {};  // seismic line lists per survey (shared with the inspector)
     const M = MS[0];  // targets and rules; every region has the same targets, its own numbers (the skill table and the info list them per region)
     const groups = [...new Set(MS.flatMap((m) => m.horizons.filter((h) => h.level === "GROUP" || h.level === "SEABED").map((h) => h.name)))];
@@ -391,21 +405,26 @@ const PAGES = {
     const SAVE = "earth:settings", sv = (() => { try { return JSON.parse(localStorage.getItem(SAVE) || "{}"); } catch { return {}; } })(), PRE = M.presets || {};
     const sugg = (t) => ["SEABED", ...(PRE[t]?.top_groups || [])].filter((g) => groups.includes(g));  // the groups where the target is most likely
     const autoP = (t) => Math.max(0.05, Math.min(0.95, Math.round((PRE[t]?.q90 ?? 0.5) * 20) / 20));  // top 10 percent of cells, not a fixed 0.5
-    const st = { colour: "p", t: "hydrocarbons", pmin: 0.5, pauto: true, smin: 0.0, fade: true, wells: true, obs: true, tied: false, ex: ALL ? 30 : 8, seq: 0, cam: null, ...sv, map: new Set(sv.map || ["coast", "grid", "faults", "elements"]),
+    const st = { colour: "p", t: "hydrocarbons", pmin: 0.5, pauto: true, smin: 0.0, fade: true, weak: false, wells: true, obs: true, tied: false, ex: ALL ? 30 : 8, seq: 0, cam: null, ...sv, map: new Set(sv.map || ["coast", "grid", "faults", "elements"]),
       sv: { id: "", axis: "inline", pos: 0.5, v: 2.0, gain: 1, base: "", ck: "" } };
     if (!M.targets.some((t) => t.id === st.t)) st.t = "hydrocarbons";
     st.show = new Set((sv.show || sugg(st.t)).filter((g) => LAYN.includes(g))); if (!st.show.size) st.show = new Set(sugg(st.t));
     if (st.pauto) st.pmin = autoP(st.t);
-    const keep = () => { try { localStorage.setItem(SAVE, JSON.stringify({ colour: st.colour, t: st.t, pmin: st.pmin, pauto: st.pauto, smin: st.smin, fade: st.fade, wells: st.wells, obs: st.obs, tied: st.tied, ex: st.ex, map: [...st.map], show: [...st.show] })); } catch {} };
+    const keep = () => { try { localStorage.setItem(SAVE, JSON.stringify({ colour: st.colour, t: st.t, pmin: st.pmin, pauto: st.pauto, smin: st.smin, fade: st.fade, weak: st.weak, wells: st.wells, obs: st.obs, tied: st.tied, ex: st.ex, map: [...st.map], show: [...st.show] })); } catch {} };
     const tgt = (id, m = M) => m.targets.find((t) => t.id === id);
-    const desk = stage2('<div class="fill" id="pe"></div>', () => ({ view: "earth", target: st.t, definition: tgt(st.t)?.title || "", region: st.cellRegion || REG[0], earth_region: st.cellRegion || REG[0], region_name: RNAME(st.cellRegion || REG[0]),
-      earth_target: st.t, cell: st.cell ?? null, probability_at_least: st.pmin, formations: [...st.show].slice(0, 30), depth_reference: "sea" }));
+    const desk = stage2('<div class="fill" id="pe"></div>', () => {
+      const r = st.selection?.region || REG[0];
+      return { view: "earth", target: st.t, definition: tgt(st.t)?.title || "", region: r, earth_region: r, region_name: RNAME(r), earth_build: build(r),
+        earth_wellbore: st.selection?.well || "", earth_target: st.t, cell: st.selection?.cell ?? null, probability_at_least: st.pmin, formations: [...st.show].slice(0, 30), depth_reference: "sea" };
+    });
+    const isComposite = (t) => ["co2_storage", "chance_of_success"].includes(t);
     const PRESET = [["oil", "Oil and gas prospects", "hydrocarbons"], ["res", "Reservoir quality", "reservoir"], ["co2", "CO2 storage", "co2_storage"], ["op", "Drilling hazard", "overpressure"]];
-    const COLS = [["Target", [["p", "probability of the target"]]], ["Properties between wells", [["po", "porosity (%)"], ["gr", "gamma ray (gAPI)"]]], ["CO2 storage", [["cc", "capacity (kt per cell)"], ["lw", "old wells through the unit (leak paths)"]]]];
+    const COLS = [["Target", [["p", "probability of the target"]]], ["Properties between wells", [["po", "porosity (%)"], ["gr", "gamma ray (gAPI)"]]], ["CO2 storage", [["cc", "capacity (kt per cell)"], ["lw", "nearby legacy wells (screening)"]]]];
     const CDESC = { p: "Colour = the target's probability (published form: model, unit rate or base rate); faint dots have little data behind them.", po: "Colour = estimated porosity, the compaction trend plus the unit's offset and nearby wells.",
-      gr: "Colour = estimated gamma ray per unit: low is sand-like, high is shale-like. Only regions with FORCE log wells.", cc: "Colour = expected CO2 capacity of the cell at the median storage efficiency.", lw: "Colour = old wellbores within 2 km drilled through the unit: possible CO2 leak paths." };
+      gr: "Colour = estimated gamma ray per unit: low is sand-like, high is shale-like. Only regions with FORCE log wells.", cc: "Colour = expected CO2 capacity of the cell at the median storage efficiency.", lw: "Nearby wellheads that reach below the cell top; not proven intersections or leaks." };
     sec("L", "e-r", "Region and presets", `<div class="row"><label>Region <select id="e-r">${RG.map((r) => `<option value="${r.id}" ${!ALL && r.id === REG[0] ? "selected" : ""} ${r.built ? "" : "disabled"}>${esc(r.title)}${r.built ? "" : " (not built)"}</option>`).join("")}
       ${built.length > 1 ? `<option value="all" ${ALL ? "selected" : ""}>All regions side by side (${built.length})</option>` : ""}</select></label></div>
+      ${smeaheia ? `<div class="row"><button id="smeaheia" type="button" class="btn on">Explore Smeaheia</button></div><p class="tip">Go to GN1101 and show the feasibility workbook picks. These are research controls, not a calibrated volume.</p>` : ""}
       <p class="tip" style="margin:2px 0">Presets: a target, its likely strata and a threshold that shows its top 10 percent of cells.</p>
       <div class="row presets">${PRESET.map(([k, t]) => `<button class="btn" type="button" data-pre="${k}">${esc(t)}</button>`).join("")}</div>
       <p class="tip">Settings stay when you change region. Each region is fitted and tested on its own wells; "side by side" does not pool them.</p>`, true);
@@ -413,9 +432,10 @@ const PAGES = {
       <p class="tip" id="e-td" style="margin:2px 0"></p>
       <div class="row"><label>Colour cells by <select id="e-c">${COLS.map(([g, os]) => `<optgroup label="${esc(g)}">${os.map(([v, t]) => `<option value="${v}" ${v === st.colour ? "selected" : ""}>${esc(t)}</option>`).join("")}</optgroup>`).join("")}</select></label></div>
       <p class="tip" id="e-cd" style="margin:2px 0"></p>`, true);
-    sec("L", "e-fl", "Which cells", `<div class="row"><label class="chk" style="width:100%">probability at least <input type="range" id="e-p" min="0.05" max="0.95" step="0.05" value="${st.pmin}" style="flex:1"> <span id="e-pv" class="mono">${st.pmin.toFixed(2)}</span></label></div>
+    sec("L", "e-fl", "Which cells", `<div class="row"><label class="chk" style="width:100%"><span id="e-pl">probability at least</span> <input type="range" id="e-p" min="0.05" max="0.95" step="0.05" value="${st.pmin}" style="flex:1"> <span id="e-pv" class="mono">${st.pmin.toFixed(2)}</span></label></div>
       <div class="row"><label class="chk"><input type="checkbox" id="e-pa" ${st.pauto ? "checked" : ""}> automatic: the target's top 10 percent of cells</label></div>
       <div class="row"><label class="chk" style="width:100%">support at least <input type="range" id="e-s" min="0" max="0.9" step="0.05" value="${st.smin}" style="flex:1"> <span id="e-sv" class="mono">${st.smin.toFixed(2)}</span></label></div>
+      <div class="row"><label class="chk"><input type="checkbox" id="e-weak" ${st.weak ? "checked" : ""}> include cells with near-zero support</label></div>
       <div class="row"><label class="chk"><input type="checkbox" id="e-f" ${st.fade ? "checked" : ""}> fade cells with little support</label></div><p id="e-n" class="tip"></p>`, true);
     sec("L", "e-s", "Strata (group tops)", `<p class="tip" style="margin:2px 0">A group fills the space down to the next top. Point at a name to pick out its sheet · <button class="lnk" id="e-sug" type="button">suggested</button> · <button class="lnk" id="e-none" type="button">none</button> · <button class="lnk" id="e-all" type="button">all</button></p>
       <div id="e-g">${groups.map((g) => `<label class="chk lay" data-hl="${esc(g)}"><input type="checkbox" data-g="${esc(g)}" ${st.show.has(g) ? "checked" : ""}>${swatch(gcol(g))} ${esc(g)}</label>`).join("")}
@@ -423,7 +443,7 @@ const PAGES = {
     sec("L", "e-m", "Wells and map", `<div class="row"><label class="chk lay" data-hl="wells"><input type="checkbox" id="e-w" ${st.wells ? "checked" : ""}>${swatch("#e0218a", "line")} wells (vertical depth; sidetracks without one estimated)</label></div>
       <div class="row"><label class="chk lay" data-hl="observed"><input type="checkbox" id="e-o" ${st.obs ? "checked" : ""}>${swatch("linear-gradient(90deg,#440154,#21918c,#fde725)", "line")} observed in wells: what each well found, unit by unit</label></div>
       <p class="tip" style="margin:2px 0">Map layers, drawn at sea level. Point at a name to pick it out.</p><div id="e-ml">${ML.map(([k, t, c, kind]) => `<label class="chk lay" data-hl="map:${k}"><input type="checkbox" data-m="${k}" ${st.map.has(k) ? "checked" : ""}>${swatch(c, kind)} ${esc(t)}</label>`).join("")}</div>`, false);
-    sec("L", "seis", "Seismic", SV.length ? `<p class="tip" style="margin:0 0 6px">A vertical section along one survey line, placed where it is. Depth = two-way time / 2 x velocity from sea level: a preview, not a calibrated tie (tied horizons are).</p>
+    sec("L", "seis", "Seismic", SV.length ? `<p class="tip" style="margin:0 0 6px">Preview depth = TWT × velocity / 2, assuming time zero at sea level. The first trace sample is not the seabed. Preview depths are not calibrated.</p>
       <div class="row"><label>Survey <select id="sv-id"><option value="">none</option>${SV.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></label></div>
       <div class="row"><label class="chk"><input type="radio" name="sv-ax" value="inline" checked> inline</label><label class="chk"><input type="radio" name="sv-ax" value="crossline"> crossline</label>
         <label class="chk"><input type="radio" name="sv-ax" value="time"> time slice</label><label class="chk"><input type="radio" name="sv-ax" value="cube"> whole cube</label></div>
@@ -432,20 +452,49 @@ const PAGES = {
       <div class="row"><label class="chk">gain <input type="range" id="sv-g" min="0.5" max="6" step="0.1" value="1"> <span id="sv-gv">1.0×</span></label></div>
       <div class="row"><label class="chk"><input type="checkbox" id="sv-clear" checked> see-through: weak amplitudes transparent</label></div>
       <div class="row"><label>Difference against <select id="sv-base"><option value="">none (amplitude)</option></select></label><span class="tip">same processing only</span></div>
-      <div class="row"><label class="chk" title="Smeaheia key horizons converted to depth with the well tie (L058), only where they beat the wells on held-out picks"><input type="checkbox" id="sv-tied" ${st.tied ? "checked" : ""}> tied seismic horizons (depth)</label> <button class="btn" id="sv-fly" type="button">Fly to survey</button></div>
+      <div class="row">${hasPilot ? `<label class="chk"><input type="checkbox" id="sv-tied" ${st.tied ? "checked" : ""}> 2010 tied horizons (research)</label>` : ""} <button class="btn" id="sv-fly" type="button">Fly to survey</button></div>
+      ${smeaheia ? `<div class="row"><label class="chk"><input type="checkbox" id="sv-picks"> GN1101 feasibility picks (interpretation)</label></div><p id="sv-pick-note" class="tip"></p>` : ""}
       <div class="row"><button class="btn on" id="sv-inspect" title="Open a side pane with a 2D section or time slice and a 3D cube of this survey">Inspect seismic ▸</button></div>
       <p class="tip" style="margin:4px 0">${[...new Set(SV.map((x) => x.credit))].map(esc).join("<br>")}</p>` : '<p class="tip">No seismic indexed.</p>', false);
     sec("L", "e-v", "Display", `<div class="row"><label class="chk">depth stretch <input type="range" id="e-x" min="1" max="60" value="${st.ex}"> <span id="e-xv">${st.ex}×</span></label></div>
       <div class="row"><button class="btn" id="e-top" type="button" title="look straight down, like a map">Top view</button> <button class="btn" id="e-reset" type="button">Reset view</button></div>
-      <p class="tip">Export for Petrel or RMS (surfaces as IRAP and ZMAP+, a zone grid as GRDECL with the probabilities): ${REG.map((r) => `<a href="api/earth/export?region=${r}" download>${esc(RNAME(r))}</a>`).join(" · ")}</p>`, false);
+      <p class="tip">Export for Petrel / RMS: ${REG.map((r, i) => MS[i].export_available === false ? `${esc(RNAME(r))}: no verified export` : `<a href="${esc(href("export", r))}" download>${esc(RNAME(r))}</a>`).join(" · ")}</p>`, false);
     sec("R", "e-info", "What you are looking at", '<div id="e-ib"></div>', true);
     { const T7 = ["hydrocarbons", "oil", "gas", "reservoir", "overpressure", "green_clay", "calcareous_clay", "sandy_delta"];
       sec("R", "e-skill", "Skill by region (held-out wells)", `<p class="tip">Deviance gain (the share of the base rate's prediction error removed: 0 = none, 1 = perfect) over each region's base rate on held-out 40 km blocks of its own wells (0 = no better than the base rate). After the slash: the same model trained on wells completed before 2005 and scored on later wells (forward in time). In brackets: what is published (model, unit prior or base rate).</p>
         <table style="font-size:12px"><tr><th>target${built.map((r) => `<th class=r>${esc(r.short || r.title)}`).join("")}</tr>${T7.map((t) => `<tr><td>${t.replace(/_/g, " ")}${built.map((r) => { const k = r.skill[t]; return `<td class=r>${k ? `${k.gain_model_vs_base} / ${k.forward_in_time ?? "–"} <span class="tip">(${esc(k.published || "")})</span>` : "–"}`; }).join("")}</tr>`).join("")}</table>
         <p class="tip">Not built yet: ${RG.filter((r) => !r.built).map((r) => esc(r.title)).join(", ") || "none"}.</p>`, false); }
-    sec("R", "e-cell", "Selected cell: the evidence", '<div id="e-cb"><p class="tip">Click a cell (a dot) to see where its number comes from.</p></div>', true);
+    const pickHint = "Click a cell, well marker or horizon to inspect its evidence.";
+    sec("R", "e-cell", "Selected evidence", `<div id="e-cb"><p class="tip">${pickHint}</p></div>`, true);
+    if (smeaheia) {
+      sec("R", "e-support", "Smeaheia depth coverage", '<div id="e-depth-support"><p class="tip">Loading source coverage…</p></div>', false);
+      const renderSupport = (audit) => {
+        const el = $("#e-depth-support");
+        if (!live() || !el) return;
+        if (!audit?.surveys?.length) { el.textContent = "Local depth coverage receipt unavailable."; return; }
+        const spans = (rows) => rows.length ? rows.slice(0, 3).map((r) => `${f2(r.from_md_m, 1)}–${f2(r.to_md_m, 1)} m MD`).join("; ") + (rows.length > 3 ? `; +${rows.length - 3} spans in receipt` : "") : "none in this source";
+        const records = (w) => Object.entries(w.force).filter(([, rows]) => rows.length).map(([curve, rows]) => `${esc(curve)} ${spans(rows)}`).join("<br>");
+        el.innerHTML = `<p><b>${audit.independent_ties_verified} verified independent ties.</b> MD spans below describe source coverage, not registration to seismic. Depths are along the hole.</p>
+          ${audit.surveys.map((s) => `<h3>${esc(s.id.toUpperCase())}</h3><p class="tip">Indexed TWT ${s.indexed_time_ms.t0_ms} to ${s.indexed_time_ms.t_end_ms} ms. First sample is not the seabed.</p>
+            ${s.wells.map((w) => `<details><summary>${esc(w.wellbore)} · ${esc(w.tie_status)}</summary>
+            <p class="tip">Sodir NPDID ${w.npdid} · ${w.in_hull ? `${w.nearest_indexed_trace_m} m from nearest retained trace at wellhead` : "published reference, not in this indexed footprint screen"}</p>
+            <p><b>Measured wireline (FORCE):</b><br>${records(w) || "none in FORCE training for this well."}</p>
+            ${w.local_sonic.map((l) => `<p><b>Released sonic:</b> ${esc(l.curve)} (${esc(l.units)}), ${spans(l.spans)}.</p>`).join("")}
+            <p><b>RealPore samples:</b> ${w.realpore.rows} rows, ${w.realpore.porosity_rows} porosity values${w.realpore.rows ? `; ${spans(w.realpore.spans)} (discrete plugs)` : ""}.</p>
+            <p><b>Core–log pairs:</b> ${w.porosity_log_pairs.rows}${w.porosity_log_pairs.rows ? ` within 0.5 m MD; ${spans(w.porosity_log_pairs.spans)}` : " in this screen"}.</p>
+            <p><b>Report-derived intervals:</b> ${w.report_intervals.length ? w.report_intervals.map((r) => `${esc(r.name)} ${f2(r.from_md_m, 0)}–${f2(r.to_md_m, 0)} m MD`).join("; ") : "none scored for this target"}.</p>
+            ${w.published_picks.length ? `<p><b>Workbook interpretations:</b> ${esc(w.published_picks[0].source_well)}, ${w.published_picks.map((p) => `${f2(p.md_m, 1)} m MD → ${f2(p.twt_ms, 1)} ms TWT`).join("; ")}.</p>` : ""}
+            ${w.datum_issue ? `<p class="tip">${esc(w.datum_issue)}</p>` : ""}
+            ${w.report_reference ? `<p class="tip">§${esc(w.report_reference.section)}, PDF page ${w.report_reference.pdf_page}. ${esc(w.report_reference.note)}</p>` : ""}
+            ${w.petrography_reference ? `<p class="tip">Petrography, Table ${esc(w.petrography_reference.table)}, PDF page ${w.petrography_reference.pdf_page}. ${esc(w.petrography_reference.note)}</p>` : ""}
+            </details>`).join("")}`).join("")}
+          <p class="tip">${esc(audit.credit)} · <a href="api/provenance/smeaheia-support" target="_blank" rel="noopener">Source rows, gaps and acquisition list</a></p>`;
+      };
+      api("provenance/smeaheia-support").then(renderSupport, () => renderSupport(null));
+    }
     const C = new Map(), get = (k, f) => (C.has(k) ? Promise.resolve(C.get(k)) : f().then((v) => (C.set(k, v), v)));
-    const info = () => { const t = tgt(st.t); const g = t.gain_model_vs_base; $("#e-ib").innerHTML = `<p><b>${esc(t.title)}</b>. Each dot is one unit (formation, else group) in one ${REG.map((r, i) => MS[i].pilot.step_km).join("/")} km column; colour = probability, faint = little data behind it (support). Depth is metres below sea level.</p>
+    const info = () => { const t = tgt(st.t); const g = t.gain_model_vs_base; $("#e-ib").innerHTML = `<p><b>${esc(t.title)}</b>. Each prediction dot is one unit (formation, else group) in one ${REG.map((r, i) => MS[i].pilot.step_km).join("/")} km column. Colour = ${isComposite(t.id) ? "screening score (not a probability)" : "estimated probability"}; support is a separate score based on nearby evidence and held-out skill. Depth is metres below sea level.</p>
+      <p class="tip">${REG.map((r) => `${esc(RNAME(r))}: ${build(r) === "legacy" ? buildText(r) : `<a href="${esc(href("snapshot", r))}" target="_blank" rel="noopener">${buildText(r)}</a>`}`).join(" · ")}</p>
       ${ALL ? `<p>${REG.map((r, i) => { const x = tgt(st.t, MS[i]); return x ? `${esc(MS[i].pilot.title)}: ${x.id === "co2_storage" ? "composite, not calibrated" : `gain <b>${x.gain_model_vs_base}</b> (${esc(x.published || "")})`}` : ""; }).join("<br>")}</p>`
       : t.id === "co2_storage" ? `<p>${esc(t.composite?.terms || "")}. Not calibrated: ${esc(t.why || "")}. Checks at known sites: ${Object.entries(t.checks || {}).map(([k, v]) => `${esc(k)}: ${Object.entries(v).filter(([kk]) => kk.endsWith("FM")).map(([kk, vv]) => `${esc(kk)} ${vv}`).join(", ")}`).join("; ")} (region median ${Object.values(t.checks || {})[0]?.pilot_median}).</p>`
         : `<p>Held-out wells (blocked 40 km): gain over the base rate <b>${g}</b> (unit prior alone ${t.gain_unit_prior_vs_base}); published: <b>${esc(t.published || "")}</b>; ${t.rows} observations in ${t.wells} wells; base rate ${pct(t.base_rate)}.</p>
@@ -455,7 +504,7 @@ const PAGES = {
       ${!ALL && t.id === "co2_storage" && M.co2_capacity ? capTable(M.co2_capacity) : ""}
       ${!ALL && t.id === "chance_of_success" && t.test ? `<p class="tip">Held-out check against wells with hydrocarbons (${t.test.rows} unit observations, calibrated on other blocks): chance of success ${t.test.gain_cos}; elements alone: ${(t.composite?.elements || []).map((e) => `${e} ${t.test["gain_" + e]}`).join(", ")}. Limiting element across cells: ${Object.entries(t.limiting_share || {}).map(([k, v]) => `${k} ${pct(v)}`).join(", ")}. Charge at ${esc(t.composite?.charge_at || "")}.</p>` : ""}
       ${M.conditional_on ? `<p class="tip"><b>Read as:</b> ${esc(M.conditional_on)}.</p>` : ""}
-      <p class="tip">Surfaces: tops chosen per horizon by held-out tests (kriging, deep-kernel GP, isochores, tied seismic). <a href="#log">Log</a> L056–L070.</p>`; };
+      <p class="tip">Model surfaces are estimates, not measured tops. Rock physics template results are diagnostic only and do not feed these probabilities. <a href="#log">Decision log</a>.</p>`; };
     const mapTraces = async (box) => {  // map layers in the scene's frame (EPSG:3035 km) at depth 0, clipped to the box
       const out = [], [x0, x1, y0, y1] = box, inb = (x, y) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
       const line = (xs, ys, k, c, w, dash) => out.push({ type: "scatter3d", mode: "lines", x: xs, y: ys, z: xs.map((v) => (v == null ? null : 0)), line: { color: c, width: w, ...(dash ? { dash } : {}) }, name: ML.find((m) => m[0] === k)[1], meta: { hl: "map:" + k }, hoverinfo: "skip", showlegend: false });
@@ -465,55 +514,64 @@ const PAGES = {
         for (let la = 54; la <= 76; la += ALL ? 2 : 1) { const [a, b] = proj(Array.from({ length: 81 }, (_, i) => [-10 + i * 0.6, la])); xs.push(...a); ys.push(...b); }
         for (let lo = -10; lo <= 40; lo += ALL ? 5 : 2) { const [a, b] = proj(Array.from({ length: 61 }, (_, i) => [lo, 54 + i * 0.4])); xs.push(...a); ys.push(...b); }
         line(xs, ys, "grid", css("--rule"), 1); }
-      const MP = await Promise.all(REG.map((r) => get("map|" + r, () => api("earth/map", { region: r }).catch(() => null))));
+      const MP = await Promise.all(REG.map((r) => get("map|" + r, () => ea("map", r).catch(() => null))));
       MP.filter(Boolean).forEach((m) => {
         if (st.map.has("faults")) line(m.faults.x, m.faults.y, "faults", "#b5442c", 2.5);
         if (st.map.has("elements")) line(m.elements.x, m.elements.y, "elements", "#5b7fa6", 1.5, "dash");
         if (st.map.has("names")) { const n = m.element_names.filter((e) => inb(e.x, e.y)); out.push({ type: "scatter3d", mode: "text", x: n.map((e) => e.x), y: n.map((e) => e.y), z: n.map(() => 0), text: n.map((e) => e.name), textfont: { size: 10, color: "#5b7fa6" }, meta: { hl: "map:names" }, name: "structural element names", hovertext: n.map((e) => `${e.name}: ${e.kind}`), hoverinfo: "text", showlegend: false }); } });
       if (st.map.has("surveys")) { const SV = await get("surveys", () => api("seismic/surveys").catch(() => [])); const xs = [], ys = []; SV.forEach((s) => { if (!s.footprint?.length) return; const [a, b] = proj([...s.footprint, s.footprint[0]].map(([la, lo]) => [lo, la])); xs.push(...a); ys.push(...b); }); line(xs, ys, "surveys", "#c99a06", 3); }
       return out; };
-    const draw = async () => {
+    const minSupport = () => Math.max(st.smin, st.weak ? 0 : 0.05);
+    const drawScene = async () => {
       const my = ++st.seq, g = $("#pe"); $("#e-pv").textContent = st.pmin.toFixed(2); $("#e-sv").textContent = st.smin.toFixed(2); $("#e-xv").textContent = st.ex + "×"; info(); keep();
+      $("#e-pl").textContent = isComposite(st.t) ? "score at least" : "probability at least";
       { const t = tgt(st.t); $("#e-td").textContent = t ? (t.base_rate != null ? `Base rate ${pct(t.base_rate)} of unit observations; published as ${t.published}.` : "A composite of other targets, not calibrated.") + (st.pauto ? ` Threshold: the top 10 percent of cells (${st.pmin.toFixed(2)}).` : "") : ""; $("#e-cd").textContent = CDESC[st.colour] || ""; }
       const lim = ALL ? Math.round(30000 / REG.length) : 30000;
-      const D = await Promise.all(REG.map((r) => Promise.all([get("s|" + r, () => api("earth/surfaces", { step: ALL ? 3 : 2, region: r })), get(["t", r, st.t, st.pmin, st.smin].join("|"), () => api("earth/target", { t: st.t, pmin: st.pmin, smin: st.smin, limit: lim, region: r })), get("w|" + r, () => api("earth/wells", { region: r }))])));
-      if (my !== st.seq || !g) return;
+      const drawnTarget = st.t, smin = minSupport();
+      const D = await Promise.all(REG.map((r) => Promise.all([get("s|" + r, () => ea("surfaces", r, { step: ALL ? 3 : 2 })), get(["t", r, drawnTarget, st.pmin, smin].join("|"), () => ea("target", r, { t: drawnTarget, pmin: st.pmin, smin, limit: lim })), get("w|" + r, () => ea("wells", r))])));
+      if (my !== st.seq || !g || !live()) return;
       const nT = D.reduce((n, d) => n + d[1].n, 0), nS = D.reduce((n, d) => n + d[1].shown, 0);
-      $("#e-n").textContent = `${nT.toLocaleString()} cells at or above ${st.pmin.toFixed(2)}${nS < nT ? `; the ${nS.toLocaleString()} most likely and best supported shown` : ""}.`;
+      $("#e-n").textContent = `${nT.toLocaleString()} cells at or above ${st.pmin.toFixed(2)}, support ≥ ${smin.toFixed(2)}${nS < nT ? `; ${nS.toLocaleString()} shown` : ""}.`;
       const tr = [];
       D.forEach(([S], ri) => S.surfaces.filter((h) => st.show.has(h.name)).forEach((h) => { const c = gcol(h.name); tr.push({ type: "surface", x: S.x, y: S.y, z: h.z.map((r) => r.map((v) => (v == null ? null : -v))), customdata: h.sd.map((r, a) => r.map((v, b) => [v, h.near_km[a][b]])), surfacecolor: h.z.map((r) => r.map(() => 0)), cmin: 0, cmax: 1,
-        colorscale: [[0, c], [1, c]], showscale: false, opacity: 0.45, name: h.name, meta: { hl: h.name }, showlegend: false, hovertemplate: `top ${esc(h.name)}${ALL ? ` (${esc(REG[ri])})` : ""}: %{z:.0f} m (TVDSS, negative = below sea level)<br>± %{customdata[0]:.0f} m (1 sd); nearest well pick %{customdata[1]:.1f} km<extra></extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } }); }));
+        colorscale: [[0, c], [1, c]], showscale: false, opacity: 0.45, name: h.name, meta: { hl: h.name, pick: "surface", region: REG[ri] }, showlegend: false, hovertemplate: `estimated ${esc(h.name)}${ALL ? ` (${esc(REG[ri])})` : ""}: %{z:.0f} m (signed TVDSS)<br>± %{customdata[0]:.0f} m (1 sd); nearest well pick %{customdata[1]:.1f} km<extra></extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } }); }));
       const bins = st.fade ? [[0.6, 1.01, 0.95, "well supported"], [0.3, 0.6, 0.5, "some support"], [-1, 0.3, 0.15, "little support"]] : [[-1, 1.01, 0.85, "cells"]];
-      const prop = async (name, k) => { const P = (await Promise.all(REG.map((r) => get(k + "|" + r, () => api("earth/property", { name, region: r, limit: lim }).catch(() => null))))); return P.map((p, ri) => p && { ...p, ri }).filter(Boolean); };
+      const prop = async (name, k) => { const P = (await Promise.all(REG.map((r) => get(k + "|" + r, () => ea("property", r, { name, limit: lim }).catch(() => null))))); return P.map((p, ri) => p && { ...p, ri }).filter(Boolean); };
       const join = (P, f) => P.flatMap((p) => (f === "customdata" ? p.cell.map((c, i) => [c, p.unit[i], p.sd?.[i], p.ri]) : p[f]));  // one list over the regions; customdata = cell, unit, sd, region
       const PC = { po: ["porosity", "porosity (estimated)", 0, 35, [[0, "#3b2c1a"], [0.5, "#c9a54a"], [1, "#fff3b0"]], "%", (G) => `Porosity between wells, sigma ${G.test?.sigma_pct} points (held-out error of the P3.2 model).`],
         cc: ["co2_capacity", "CO2 capacity", 0, null, [[0, "#e8f1f7"], [0.4, "#5aa4c8"], [1, "#0b3a5d"]], "kt", (G) => `Expected CO2 storage capacity per cell (kt) at the median efficiency (2 %), weighted by P(reservoir, dense CO2, seal, no overpressure).`] };
       if (PC[st.colour]) { const [nm, title, cmin, cmax, cs, un, why] = PC[st.colour]; const P = await prop(nm, st.colour); if (!P.length) { $("#e-n").textContent = "Not built in this region."; } else { if (my !== st.seq) return;
         const val = join(P, "value"), hi = cmax ?? Math.max(1, [...val].sort((a, b) => a - b)[Math.floor(val.length * 0.98)] || 1);
         $("#e-n").textContent = `${why(P[0])} ${P.reduce((n, p) => n + p.shown, 0).toLocaleString()} of ${P.reduce((n, p) => n + p.n, 0).toLocaleString()} cells (evenly thinned).`;
-        tr.push({ type: "scatter3d", mode: "markers", name: title, x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
+        tr.push({ type: "scatter3d", mode: "markers", name: title, meta: { pick: "cell" }, x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
           marker: { size: 3.2, opacity: 0.85, color: val, cmin, cmax: hi, colorscale: cs, showscale: true, colorbar: { title: { text: un }, thickness: 10, len: 0.5 } },
           hovertemplate: `%{customdata[1]}<br>${title} %{marker.color:.1f} ${un}<extra></extra>` }); } }
       else if (st.colour === "lw") { const P = await prop("legacy_wells", "lw"); if (!P.length) { $("#e-n").textContent = "Not built in this region."; } else { if (my !== st.seq) return;
-        $("#e-n").textContent = `Old wellbores within 2 km that were drilled through each unit, in ${P.reduce((n, p) => n + p.shown, 0).toLocaleString()} of ${P.reduce((n, p) => n + p.n, 0).toLocaleString()} cells. ${P[0].test?.what || ""}.`;
-        tr.push({ type: "scatter3d", mode: "markers", name: "old wells through the unit", x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
+        $("#e-n").textContent = `${P.reduce((n, p) => n + p.shown, 0).toLocaleString()} of ${P.reduce((n, p) => n + p.n, 0).toLocaleString()} cells. ${P[0].test?.what || ""}`;
+        tr.push({ type: "scatter3d", mode: "markers", name: "nearby legacy wells", meta: { pick: "cell" }, x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
           marker: { size: 3.2, opacity: 0.8, color: join(P, "value"), cmin: 0, cmax: 20, colorscale: [[0, "#d9e7f2"], [0.25, "#f2b84e"], [1, "#a3271c"]], showscale: true, colorbar: { title: { text: "wellbores" }, thickness: 10, len: 0.5 } },
-          hovertemplate: "%{customdata[1]}<br>%{marker.color:.0f} wellbores within 2 km drilled through it<extra>possible CO2 leak paths</extra>" }); } }
+          hovertemplate: "%{customdata[1]}<br>%{marker.color:.0f} nearby wellheads reaching below the top<extra>screening only</extra>" }); } }
       else if (st.colour === "gr") { const P = await prop("gamma_ray", "gr"); if (!P.length) { $("#e-n").textContent = "No gamma-ray model here: no FORCE log wells."; } else { if (my !== st.seq) return; const t = P[0].test;
         $("#e-n").textContent = `Gamma ray in ${P.reduce((n, p) => n + p.shown, 0).toLocaleString()} of ${P.reduce((n, p) => n + p.n, 0).toLocaleString()} cells (evenly thinned${P.length < REG.length ? "; only regions with FORCE log wells" : ""}). Held-out wells: error ${t.rmse_model_gAPI} gAPI vs unit mean ${t.rmse_unit_mean_gAPI} and region mean ${t.rmse_pilot_mean_gAPI} (${t.wells} FORCE wells). One value per unit and column; within a unit the log varies by about ${t.within_unit_sd_median_gAPI} gAPI.`;
-        tr.push({ type: "scatter3d", mode: "markers", name: "gamma ray (estimated)", x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
+        tr.push({ type: "scatter3d", mode: "markers", name: "gamma ray (estimated)", meta: { pick: "cell" }, x: join(P, "x"), y: join(P, "y"), z: P.flatMap((p) => p.top.map((v, i) => -(v + p.base[i]) / 2)), customdata: join(P, "customdata"),
           marker: { size: 3.2, opacity: 0.8, color: join(P, "value"), cmin: 20, cmax: 150, colorscale: [[0, "#f2d74e"], [0.5, "#8c9a4b"], [1, "#5b3a1a"]], showscale: true, colorbar: { title: { text: "GR (gAPI)" }, thickness: 10, len: 0.5 } },
           hovertemplate: "%{customdata[1]}<br>gamma ray %{marker.color:.0f} ± %{customdata[2]:.0f} gAPI (estimated between wells)<extra>low = sand-like, high = shale-like</extra>" }); } }
       else bins.forEach(([lo, hi, op, nm]) => { const x = [], y = [], z = [], cd = [], col = [];
         D.forEach(([, T], ri) => T.support.forEach((s, i) => { if (s >= lo && s < hi) { x.push(T.x[i]); y.push(T.y[i]); z.push(-(T.top[i] + T.base[i]) / 2); cd.push([T.cell[i], T.unit[i], T.p05[i], T.p95[i], T.support[i], T.top[i], T.base[i], ri]); col.push(T.p[i]); } }));
         if (!x.length) return;
-        tr.push({ type: "scatter3d", mode: "markers", name: nm, x, y, z, customdata: cd,
-          marker: { size: ALL ? 2.6 : 3.5, opacity: op, color: col, cmin: 0, cmax: 1, colorscale: "Viridis", showscale: nm === bins[0][3], colorbar: { title: { text: "probability" }, thickness: 10, len: 0.5 } },
-          hovertemplate: "%{customdata[1]}<br>probability %{marker.color:.0%} (90% range %{customdata[2]:.0%}–%{customdata[3]:.0%})<br>support %{customdata[4]:.2f} (0 = no data, 1 = well covered)<br>%{customdata[5]:.0f}–%{customdata[6]:.0f} m TVDSS (below sea level)<extra>click for the evidence</extra>" }); });
-      if (st.wells) { const wx = [], wy = [], wz = []; D.forEach(([, , Wl]) => Wl.forEach((w) => { w.x.forEach((v, i) => { wx.push(v); wy.push(w.y[i]); wz.push(-w.z[i]); }); wx.push(null); wy.push(null); wz.push(null); }));
-        tr.push({ type: "scatter3d", mode: "lines", x: wx, y: wy, z: wz, line: { color: "#e0218a", width: 3 }, name: "wells", meta: { hl: "wells" }, hoverinfo: "skip" }); }  // magenta: away from the viridis greens
+        tr.push({ type: "scatter3d", mode: "markers", name: nm, meta: { pick: "cell" }, x, y, z, customdata: cd,
+          marker: { size: ALL ? 2.6 : 3.5, opacity: op, color: col, cmin: 0, cmax: 1, colorscale: "Viridis", showscale: !tr.some((o) => o.marker?.colorbar?.title?.text === "probability" || o.marker?.colorbar?.title?.text === "score"), colorbar: { title: { text: isComposite(drawnTarget) ? "score" : "probability" }, thickness: 10, len: 0.5 } },
+          hovertemplate: `%{customdata[1]}<br>${isComposite(drawnTarget) ? "screening score %{marker.color:.2f}" : "probability %{marker.color:.0%} (90% range %{customdata[2]:.0%}–%{customdata[3]:.0%})"}<br>support %{customdata[4]:.2f}<br>%{customdata[5]:.0f}–%{customdata[6]:.0f} m TVDSS<extra>click for evidence</extra>` }); });
+      const wellMarkers = [];
+      if (st.wells) { const wx = [], wy = [], wz = []; D.forEach(([, , Wl], ri) => Wl.forEach((w) => {
+        w.x.forEach((v, i) => { wx.push(v); wy.push(w.y[i]); wz.push(w.z[i] == null ? null : -w.z[i]); }); wx.push(null); wy.push(null); wz.push(null);
+        const head = w.head || [w.x[0], w.y[0], w.z[0]]; if (head.every(Number.isFinite)) wellMarkers.push({ w, head, r: REG[ri] });
+      }));
+        tr.push({ type: "scatter3d", mode: "lines", x: wx, y: wy, z: wz, line: { color: "#e0218a", width: 3 }, name: "well paths", meta: { hl: "wells" }, hoverinfo: "skip" });
+        tr.push({ type: "scatter3d", mode: "markers", x: wellMarkers.map((m) => m.head[0]), y: wellMarkers.map((m) => m.head[1]), z: wellMarkers.map((m) => -m.head[2]),
+          text: wellMarkers.map((m) => esc(m.w.name)), marker: { size: 4, color: "#e0218a", symbol: "diamond" }, name: "well evidence", meta: { pick: "well", hl: "wells" }, hovertemplate: "%{text}<extra>well evidence</extra>" }); }
       if (st.obs && st.t !== "co2_storage" && st.t !== "chance_of_success") {  // backtracking: what the wells found, at vertical depth, coloured like the cells
-        const O = (await Promise.all(REG.map((r) => get(["o", r, st.t].join("|"), () => api("earth/observed", { t: st.t, region: r }).catch(() => null))))).filter(Boolean); if (my !== st.seq) return;
+        const O = (await Promise.all(REG.map((r) => get(["o", r, drawnTarget].join("|"), () => ea("observed", r, { t: drawnTarget }).catch(() => null))))).filter(Boolean); if (my !== st.seq) return;
         const ox = [], oy = [], oz = [], oc = [], ot = [];
         O.forEach((o) => o.x.forEach((x, i) => { ox.push(x, x, null); oy.push(o.y[i], o.y[i], null); oz.push(-o.top[i], -o.base[i], null); oc.push(o.ev[i], o.ev[i], o.ev[i]);
           const h = `${o.wellbore[i]} · ${o.unit[i]}<br>observed: ${o.ev[i] === 1 ? "yes" : o.ev[i] === 0 ? "no" : (o.ev[i] * 100).toFixed(0) + " % of records"} (evidence weight ${o.w[i]})<br>${o.top[i]}–${o.base[i]} m TVDSS`; ot.push(h, h, h); }));
@@ -558,10 +616,22 @@ const PAGES = {
           tr.push({ type: "scatter3d", mode: "lines", x: ex, y: ey, z: ez, line: { color: css("--mut"), width: 2 }, hoverinfo: "skip", showlegend: false, name: "cube edges", meta: { hl: "seismic" } });
           lab(C4.map(([a, b]) => XY[a][b][0]), C4.map(([a, b]) => XY[a][b][1]), C4.map(() => ztop + 150), C4.map(([a, b]) => `IL ${B.il[a]} · XL ${B.xl[b]}`));
           const tk = tticks(B.t_ms[0], B.t_ms[nt - 1]); lab(tk.map(() => XY[0][0][0]), tk.map(() => XY[0][0][1]), tk.map(zt), tk.map((t) => `${t} ms · ${Math.round(-zt(t))} m`)); } }
-      if (st.tied) { const T = TIED || (TIED = await api("earth/tied", { step: 2 })); if (my !== st.seq) return; const HC = ["#1b9e77", "#d95f02", "#7570b3"];
+      let picks = null;
+      if (st.picks) {
+        picks = await get("gn1101-picks", () => api("provenance/velocity/picks"));
+        if (my !== st.seq || !live()) return;
+        $("#sv-pick-note").textContent = picks.picks?.length ? `${picks.picks.length} picks at two sites. Click an amber marker for the source row.` : "Feasibility pick receipt unavailable. Amplitudes are still only a preview.";
+        if (picks.picks?.length) tr.push({ type: "scatter3d", mode: "markers", name: "GN1101 feasibility picks", meta: { pick: "gn1101", region: "pilot" },
+          x: picks.picks.map((p) => p.x_km), y: picks.picks.map((p) => p.y_km), z: picks.picks.map((p) => p.tvdss_m_signed),
+          text: picks.picks.map((p) => `${esc(p.source_well)} · ${esc(p.horizon)}`), marker: { size: 5, color: "#e5a817", symbol: "diamond" },
+          hovertemplate: "%{text}<br>%{z:.0f} m signed TVDSS<extra>workbook interpretation</extra>" });
+      } else if ($("#sv-pick-note")) $("#sv-pick-note").textContent = "";
+      if (st.tied && hasPilot) { const T = await get("tied|pilot", () => ea("tied", "pilot", { step: 2 }).catch(() => null)); if (my !== st.seq || !live()) return; const HC = ["#1b9e77", "#d95f02", "#7570b3"];
+        if (T?.surfaces.length) {
         const XY = T.lon.map((r, a) => r.map((lo, b) => (lo == null || T.lat[a][b] == null ? null : L3035(lo, T.lat[a][b]))));
         T.surfaces.forEach((h, i) => tr.push({ type: "surface", x: XY.map((r) => r.map((p) => p && p[0])), y: XY.map((r) => r.map((p) => p && p[1])), z: h.z.map((r) => r.map((v) => (v == null ? null : -v))), surfacecolor: h.z.map((r) => r.map(() => 1)), colorscale: [[0, HC[i % 3]], [1, HC[i % 3]]], showscale: false, opacity: 0.6,
-          name: h.name + " (tied seismic)", customdata: h.sd, hovertemplate: `${esc(h.name)}: tied seismic horizon<br>%{z:.0f} m (± %{customdata:.0f} m)<extra>Smeaheia, Equinor and Gassnova</extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } })); }
+          name: h.name + " (2010 research tie)", meta: { pick: "tied", region: "pilot", horizon: h.name, source: T.source }, customdata: h.sd, hovertemplate: `${esc(h.name)}: research depth estimate<br>%{z:.0f} m (± %{customdata:.0f} m)<extra>Smeaheia 2010 horizons</extra>`, lighting: { ambient: 0.85, diffuse: 0.3 } }));
+      } }
       const xr = [Math.min(...D.map(([S]) => Math.min(...S.x))), Math.max(...D.map(([S]) => Math.max(...S.x)))], yr = [Math.min(...D.map(([S]) => Math.min(...S.y))), Math.max(...D.map(([S]) => Math.max(...S.y)))], zr = [-5500, 0];
       st._g = { xr, yr, zr, ar: { x: 1, y: (yr[1] - yr[0]) / (xr[1] - xr[0]), z: ((zr[1] - zr[0]) / 1000 / (xr[1] - xr[0])) * st.ex } };
       tr.unshift(...(await mapTraces([xr[0], xr[1], yr[0], yr[1]]))); if (my !== st.seq) return;
@@ -570,22 +640,73 @@ const PAGES = {
       g._hl0 = null;  // a new drawing: forget any highlight saved from the previous one
       await plot3(g, tr, { margin: { l: 0, r: 0, t: 0, b: 0 }, uirevision: st.cam ? "earth" : "earth-" + st.seq, legend: { orientation: "h", x: 0.02, y: 0.02, font: { size: 11 } }, scene: { aspectmode: "manual", aspectratio: { x: 1, y: (yr[1] - yr[0]) / (xr[1] - xr[0]), z: ((zr[1] - zr[0]) / 1000 / (xr[1] - xr[0])) * st.ex },
         camera: st.cam || { eye: { x: 1.3, y: -1.5, z: 0.9 } }, xaxis: ax("East (km, EPSG:3035)", xr), yaxis: ax("North (km)", yr), zaxis: { ...ax("Depth below sea level (m)", zr), tickvals: [0, -1000, -2000, -3000, -4000, -5000], ticktext: ["0", "1000", "2000", "3000", "4000", "5000"] } } });
-      g.removeAllListeners?.("plotly_click"); g.on("plotly_click", async (e) => { const cd = e.points?.[0]?.customdata; if (!Array.isArray(cd) || typeof cd[0] !== "number") return; const rg = REG[cd[cd.length - 1]] && ALL ? REG[cd[cd.length - 1]] : REG[0]; const c = await api("earth/cell", { t: st.t, cell: cd[0], region: rg }); st.cell = cd[0]; st.cellRegion = rg; desk?.sync?.();
-        $("#e-cb").innerHTML = `<p><b>${esc(c.unit)}</b> (${esc(c.group)})${ALL ? ` in ${esc(RNAME(rg))}` : ""} at ${c.x_km}, ${c.y_km} km: ${c.top_m}–${c.base_m} m below sea level, ${c.thickness_m} m thick, ${c.depth_below_seabed_m} m below the seabed${c.group_top_sd_m != null ? `; group top ± ${c.group_top_sd_m} m, nearest pick ${c.group_top_nearest_pick_km} km` : ""}.</p>
-          <p>${esc(c.title)}: <b>${pct(c.p)}</b> probability (90% range ${pct(c.p05)}–${pct(c.p95)}); support <b>${c.support}</b> (0–1). Published as: ${esc(c.published || "composite")}.</p>
+      if (my !== st.seq || !live()) return;
+      const showEvidence = (selection, html) => {
+        st.selection = selection; desk?.sync?.();
+        $("#e-cb").innerHTML = html; $("#sec-e-cell").classList.remove("fold");
+      };
+      g.removeAllListeners?.("plotly_click"); g.on("plotly_click", async (e) => {
+        const point = e.points?.[0], m = point?.data?.meta, cd = point?.customdata;
+        if (!m?.pick || !live() || my !== st.seq) return;
+        const click = st.click = (st.click || 0) + 1;
+        if (m.pick === "well") {
+          const hit = wellMarkers[point.pointNumber]; if (!hit) return;
+          const { w, r } = hit;
+          showEvidence({ region: r, well: w.name }, `<p><b>${esc(w.name)}</b> · ${esc(w.source)}</p>
+            <p>FactPages: rig floor ${f2(w.rkb_m, 1)} m above sea level; water depth ${f2(w.water_depth_m, 0)} m; TD ${f2(w.td_md_m, 0)} m MD (along hole).
+            End-of-hole TVD ${f2(w.end_tvd_m, 0)} m below rig floor${w.depth_source === "estimated" ? ` (estimated, σ ${f2(w.end_tvd_sd_m, 0)} m)` : ""}.</p>
+            <p class="tip">${w.source === "FORCE path" ? "Logged positions only where available." : "Path shown at the wellhead: lateral trajectory not resolved."} Source rows: <code>wells.parquet</code> and <code>${w.source === "FORCE path" ? "force_paths.parquet" : "tops.parquet"}</code>, keyed by wellbore · ${buildText(r)}.</p>`);
+          return;
+        }
+        if (m.pick === "gn1101") {
+          const p = picks?.picks[point.pointNumber]; if (!p) return;
+          showEvidence({ region: "pilot" }, `<p><b>${esc(p.horizon)}</b> · ${esc(p.source_well)}</p>
+            <p>Workbook interpretation: ${f2(p.twt_ms)} ms TWT → ${f2(-p.tvdss_m_signed)} m below sea level. ${f2(p.md_m)} m MD along the hole. Seabed: ${f2(p.seabed_twt_ms, 1)} ms interpreted TWT; ${f2(p.water_depth_m, 0)} m registered water depth.</p>
+            <p class="tip">${esc(picks.source.member)} · ${esc(p.sheet)}, row ${p.row}. Sodir NPDID ${p.factpages_npdid}: ${esc(p.site_link)}. These are not independent checkshots. <a href="api/provenance/velocity" target="_blank" rel="noopener">Source receipt and held-out results</a>.</p>`);
+          return;
+        }
+        if (m.pick === "surface" || m.pick === "tied") {
+          if (!Number.isFinite(point.z)) return;
+          const tied = m.pick === "tied";
+          showEvidence({ region: m.region }, `<p><b>${esc(tied ? m.horizon : point.data.name)}</b> · ${tied ? "research interpretation converted to depth" : "modelled surface"}</p>
+            <p>${f2(-point.z, 0)} m below sea level at ${f2(point.x, 1)}, ${f2(point.y, 1)} km (EPSG:3035) · σ ${f2(tied ? cd : cd?.[0], 0)} m${tied ? "" : ` · nearest well pick ${f2(cd?.[1], 1)} km`}.</p>
+            <p class="tip">${tied ? `${esc(m.source)}. Not GN1101 workbook picks; no independent checkshot validation.` : "Derived estimate, not a measured well top. See surfaces.npz in the snapshot receipt."} · ${buildText(m.region)}.</p>`);
+          return;
+        }
+        if (m.pick !== "cell" || !Array.isArray(cd) || !Number.isInteger(cd[0])) return;
+        const rg = REG[cd[cd.length - 1]] || REG[0];
+        showEvidence({ region: rg }, '<p class="tip">Loading cell evidence…</p>');
+        let c;
+        try { c = await ea("cell", rg, { t: drawnTarget, cell: cd[0] }); }
+        catch (err) {
+          if (live() && my === st.seq && st.click === click) showEvidence({ region: rg }, `<p class="tip">${esc(err.message)} Reload the 3D view.</p>`);
+          return;
+        }
+        if (!live() || my !== st.seq || st.click !== click) return;
+        showEvidence({ region: rg, cell: cd[0] }, `<p><b>${esc(c.unit)}</b> (${esc(c.group)}) · ${buildText(rg)} · cell ${cd[0]}.</p>
+          <p>${c.x_km}, ${c.y_km} km: ${c.top_m}–${c.base_m} m below sea level, ${c.thickness_m} m thick, ${c.depth_below_seabed_m} m below the seabed${c.group_top_sd_m != null ? `; group top ± ${c.group_top_sd_m} m, nearest pick ${c.group_top_nearest_pick_km} km` : ""}.</p>
+          <p>${esc(c.title)}: ${isComposite(c.target) ? `<b>${f2(c.p)}</b> screening score (not a probability)` : `<b>${pct(c.p)}</b> probability (90% range ${pct(c.p05)}–${pct(c.p95)})`}; support <b>${c.support}</b> (0–1). Published as: ${esc(c.published || "composite")}.</p>
           ${c.nearest_observations ? `<table style="font-size:12px"><tr><th>nearest ${esc(c.unit)} observation<th class=r>distance (km)<th class=r>observed (0–1)<th class=r>evidence weight</tr>${c.nearest_observations.map((o) => `<tr><td>${esc(o.wellbore)}<td class=r>${o.distance_km}<td class=r>${o.event}<td class=r>${o.weight}</tr>`).join("")}</table><p class="tip">Unit rate across the region: ${pct(c.unit_rate)}. Model weights (per standard deviation of each input, on the log-odds scale): ${esc(JSON.stringify(c.coefficients))}.</p>` : `<p>Terms here: reservoir ${c.terms?.reservoir}, overpressure ${c.terms?.overpressure}. ${esc(c.composite?.terms || "")}</p>`}
           ${c.factors ? `<p class="tip">Petroleum system here: nearest mature source ${c.factors.kitchen_km} km (${c.factors.kitchen_at_max_burial_km} km at maximum burial, gas window ${c.factors.gas_kitchen_km} km); source below in the oil window with probability ${pct(c.factors.source_mature_below_p)}; nearest mapped fault ${c.factors.fault_km} km; ${c.factors.on_structural_high ? "on a mapped structural high" : "not on a mapped high"}; closure on the unit top ${c.factors.closure_m} m${c.factors.salt_km ? `; salt ${c.factors.salt_km} km` : ""}${c.factors.charge_p != null ? `; oil migrating along this unit reaches it with probability ${pct(c.factors.charge_p)} (${c.factors.charge_km2} km² of mature kitchen upstream)` : ""}. Used by this model: ${esc(c.factors.used_by_model.map((f) => FEATN[f] || f).join(", ") || "none (none beat the model without them on held-out wells)")}.</p>` : ""}
           ${c.elements ? `<p>Elements: ${Object.entries(c.elements).map(([k, v]) => `${k} <b>${v}</b>`).join(" × ")}; limiting element: <b>${esc(c.limiting_element || "")}</b>.</p>` : ""}
           ${c.co2_capacity_kt != null ? `<p class="tip">Expected CO2 capacity of this cell: <b>${c.co2_capacity_kt}</b> kt (median efficiency).</p>` : ""}
-          ${c.legacy_wells != null ? `<p class="tip">Old wellbores within 2 km drilled through this unit: <b>${c.legacy_wells}</b>. ${esc(c.legacy_note || "")}.</p>` : ""}
-          ${c.rules?.length ? `<p class="tip">Rules: ${c.rules.map((r) => `${esc(r.id)} (${esc(r.verdict)})`).join(", ")}.</p>` : ""}`; $("#sec-e-cell").classList.remove("fold"); });
+          ${c.legacy_wells != null ? `<p class="tip">Nearby legacy wells: <b>${c.legacy_wells}</b>. Screening only: proximity and end depth, not a confirmed intersection.</p>` : ""}
+          ${c.rules?.length ? `<p class="tip">Rules: ${c.rules.map((r) => `${esc(r.id)} (${esc(r.verdict)})`).join(", ")}.</p>` : ""}`); });
+    };
+    const draw = () => {
+      const seq = st.seq + 1;
+      return drawScene().catch((err) => {
+        if (!live() || seq !== st.seq) return;
+        $("#e-n").textContent = `Scene not updated: ${err.message}`;
+      });
     };
     const setG = (a) => { st.show = new Set(a.filter((g) => groups.includes(g))); $$("[data-g]").forEach((c) => (c.checked = st.show.has(c.dataset.g))); draw(); };
-    const setT = (t) => { st.t = t; $("#e-t").value = t; if (st.pauto) { st.pmin = autoP(t); $("#e-p").value = st.pmin; } };
+    const setT = (t) => { st.t = t; st.selection = null; $("#e-cb").textContent = pickHint; desk?.sync?.(); $("#e-t").value = t; if (st.pauto) { st.pmin = autoP(t); $("#e-p").value = st.pmin; } };
     $("#e-t").onchange = (e) => { setT(e.target.value); draw(); };
     $("#e-p").oninput = (e) => { st.pmin = +e.target.value; st.pauto = false; $("#e-pa").checked = false; draw(); };
     $("#e-pa").onchange = (e) => { st.pauto = e.target.checked; if (st.pauto) { st.pmin = autoP(st.t); $("#e-p").value = st.pmin; } draw(); };
     $("#e-s").oninput = (e) => { st.smin = +e.target.value; draw(); };
+    $("#e-weak").onchange = (e) => { st.weak = e.target.checked; draw(); };
     $("#e-f").onchange = (e) => { st.fade = e.target.checked; draw(); }; $("#e-c").onchange = (e) => { st.colour = e.target.value; draw(); }; $("#e-w").onchange = (e) => { st.wells = e.target.checked; draw(); }; $("#e-x").oninput = (e) => { st.ex = +e.target.value; draw(); };
     $("#e-g").onchange = (e) => { const n = e.target.dataset.g; if (!n) return; e.target.checked ? st.show.add(n) : st.show.delete(n); draw(); };
     $("#e-ml").onchange = (e) => { const n = e.target.dataset.m; if (!n) return; e.target.checked ? st.map.add(n) : st.map.delete(n); draw(); };
@@ -601,13 +722,21 @@ const PAGES = {
       sv.clear = true; $$('[name="sv-ax"]').forEach((r) => (r.onchange = (e) => { sv.axis = e.target.value; sv.ck = ""; draw(); })); $("#sv-pos").oninput = (e) => { sv.pos = +e.target.value; draw(); };
       $("#sv-clear").onchange = (e) => { sv.clear = e.target.checked; draw(); };
       $("#sv-v").oninput = (e) => { sv.v = +e.target.value; $("#sv-vv").textContent = sv.v.toFixed(2) + " km/s"; draw(); }; $("#sv-g").oninput = (e) => { sv.gain = +e.target.value; $("#sv-gv").textContent = sv.gain.toFixed(1) + "×"; draw(); }; $("#sv-base").onchange = (e) => { sv.base = e.target.value; sv.ck = ""; draw(); };
-      $("#sv-tied").onchange = (e) => { st.tied = e.target.checked; draw(); };
-      $("#sv-fly").onclick = () => { const x = SV.find((q) => q.id === sv.id) || SV[0], g = st._g; if (!g || !x) return;
+      if ($("#sv-tied")) $("#sv-tied").onchange = (e) => { st.tied = e.target.checked; draw(); };
+      if ($("#sv-picks")) $("#sv-picks").onchange = (e) => { st.picks = e.target.checked; draw(); };
+      const fly = (x) => { const g = st._g; if (!g || !x) return;
         // frame the survey: centre on its footprint at about 1.5 km depth, eye at a distance in proportion to its size (scene units: x spans ar.x)
         const fp = (x.footprint || []).map(([la, lo]) => L3035(lo, la)), xs = fp.map((p) => p[0]), ys = fp.map((p) => p[1]), [cx, cy] = fp.length ? [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] : L3035(x.centre[1], x.centre[0]);
         const size = fp.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 5) : 30, f = (size / (g.xr[1] - g.xr[0])) * g.ar.x;
         const c = { x: ((cx - (g.xr[0] + g.xr[1]) / 2) / (g.xr[1] - g.xr[0])) * g.ar.x, y: ((cy - (g.yr[0] + g.yr[1]) / 2) / (g.yr[1] - g.yr[0])) * g.ar.y, z: ((-1500 - (g.zr[0] + g.zr[1]) / 2) / (g.zr[1] - g.zr[0])) * g.ar.z };
-        st.cam = { center: c, eye: { x: c.x + 0.9 * f, y: c.y - 1.1 * f, z: c.z + 0.8 * f }, up: { x: 0, y: 0, z: 1 } }; st.camForce = true; draw(); }; }
+        st.cam = { center: c, eye: { x: c.x + 0.9 * f, y: c.y - 1.1 * f, z: c.z + 0.8 * f }, up: { x: 0, y: 0, z: 1 } }; st.camForce = true; draw(); };
+      $("#sv-fly").onclick = () => fly(SV.find((q) => q.id === sv.id) || SV[0]);
+      if ($("#smeaheia")) $("#smeaheia").onclick = () => {
+        $("#sv-picks").checked = st.picks = true;
+        // Jump to the footprint without switching on an uncalibrated amplitude curtain.
+        fly(smeaheia);
+      };
+    }
     REDRAW.scene = draw; await draw();
     { const la = [Math.min(...MS.map((m) => m.pilot.lat[0])), Math.max(...MS.map((m) => m.pilot.lat[1]))], lo = [Math.min(...MS.map((m) => m.pilot.lon[0])), Math.max(...MS.map((m) => m.pilot.lon[1]))];
       minimap($(".plotwrap"), { lat: la, lon: lo }, ALL ? `All ${REG.length} regions: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E` : `${M.pilot.title}: ${la[0]}–${la[1]}°N, ${lo[0]}–${lo[1]}°E`); }
@@ -618,7 +747,7 @@ const PAGES = {
   // cemented sand with brine, oil and gas, the samples coloured by what they say; the tests of cementation and fluid beside it.
   async rpt(region, live) {
     const RG = (await api("earth/regions")).filter((r) => r.built); region = region || "pilot";
-    const D = await api("earth/rpt", { region }).catch(() => null); if (!live()) return;
+    const [D, ablation] = await Promise.all([api("earth/rpt", { region }).catch(() => null), api("provenance/rock-porosity").catch(() => null)]); if (!live()) return;
     const st = { col: "cement", only: false, lines: new Set(["friable sand|brine", "contact cement|brine", "friable sand|gas", "contact cement|gas"]), clay: 0 };
     stage2('<div class="fill" id="pr"></div>', () => ({ view: "rock physics", target: "rock physics template", region }));
     sec("L", "r-r", "Region", `<div class="row"><label>Region <select id="r-r">${RG.map((r) => `<option value="${r.id}" ${r.id === region ? "selected" : ""}>${esc(r.title)}</option>`).join("")}</select></label></div>
@@ -636,6 +765,17 @@ const PAGES = {
       <p><b>Fluid</b>: ${ft.verdict === "not_testable" ? `not testable: ${esc(ft.why || "")}.` : `HC well-units ${ft.median_dai_hc} vs dry ${ft.median_dai_dry}, AUC ${ft.auc_softer_means_hc} ${verdict(ft)}.`} Sonic logs read the invaded zone near the hole, so oil is muted; gas shows most.</p>
       <p class="tip">Bands of 70 and 90 °C were set from the theory before the test. Mineral and fluid moduli are textbook values; density porosity assumes brine. ${D.report.valid_samples} valid samples in this region (${D.report.validity ? `porosity ${D.report.validity.phi.join("-")}, clay < ${D.report.validity.clay_max}` : ""}); tight and shaly sands fall below the friable line, outside the models.</p>`, true);
     sec("R", "r-t", "Cement index by temperature (pooled)", `<table style="font-size:12px"><tr><th>T °C<th class=r>samples<th class=r>wells<th class=r>cement<th class=r>porosity</tr>${(P.cement_vs_temperature || []).map((b) => `<tr><td>${esc(b.T)}<td class=r>${b.n}<td class=r>${b.wells}<td class=r>${b.cement}<td class=r>${b.phi}</tr>`).join("")}</table>`, true);
+    if (ablation?.main) {
+      const fmt = (c) => `${f2(c.rmse_pp.fixed_density)} / ${f2(c.rmse_pp.raw_logs)} / ${f2(c.rmse_pp.raw_plus_physics)}`;
+      const { main, template_sand: sand } = ablation;
+      sec("R", "r-core", "Do physics features improve core porosity?", `<p><b>Research only. Does not feed production probabilities.</b></p>
+        <p>Held-out RMSE (porosity points): fixed quartz/brine density / raw logs / same logs + physics.</p>
+        <p><b>Measured sonic:</b> ${fmt(main)} · ${main.rows.toLocaleString()} plugs across ${main.wells} wells. Paired 90% gain interval: ${main.gain_block_bootstrap_90_pp.map((v) => f2(v)).join(" to ")} pp.</p>
+        <p><b>Template sand:</b> ${sand.rmse_pp ? `${fmt(sand)} · ${sand.rows} plugs in ${sand.wells} wells.` : "not enough wells to score."}</p>
+        <p class="tip">Same rows within each comparison; 40 km blocked whole wells. RealPore © GeoProvider (CC BY 4.0). <a href="api/provenance/rock-porosity" target="_blank" rel="noopener">Comparison receipt</a></p>`, true);
+    } else {
+      sec("R", "r-core", "Do physics features improve core porosity?", '<p class="tip">Local core-porosity comparison receipt unavailable.</p>', true);
+    }
     const draw = async () => { const p = D.points, k = p.ai.map((_, i) => i).filter((i) => !st.only || p.valid[i]), [ct_, lo, hi] = COLS[st.col];
       const tr = D.template.filter((l) => l.clay === 0 && st.lines.has(l.model + "|" + l.fluid)).map((l) => ({ type: "scatter", mode: "lines", x: l.ai, y: l.vpvs, name: `${l.model}, ${l.fluid}`, text: l.phi.map((f) => `porosity ${(f * 100).toFixed(0)} %`),
         line: { color: RPTC[l.fluid], width: 2.5, dash: l.model === "friable sand" ? "dot" : "solid" }, hovertemplate: "%{text}<br>AI %{x:.2f}, Vp/Vs %{y:.2f}<extra>%{fullData.name}</extra>" }));
@@ -709,7 +849,7 @@ const PAGES = {
       <div class="row"><label class="chk">gain <input type="range" id="sv-g" min="0.5" max="6" step="0.1" value="1"></label></div>
       <div class="row"><label>Difference against <select id="sv-base"><option value="">none (amplitude)</option></select></label><span class="tip">same processing only</span></div>
       <div class="row"><label class="chk"><input type="checkbox" id="sv-foot" checked> survey outlines</label> <button class="btn" id="sv-fly">Fly to survey</button></div>
-      <div class="row"><label class="chk" title="Smeaheia key horizons converted to depth with the well tie (L058), only where they beat the wells on held-out picks: Shetland, Sognefjord, Fensfjord"><input type="checkbox" id="sv-tied"> tied seismic horizons (depth, light)</label></div>
+      <div class="row"><label class="chk" title="Smeaheia Key Horizons 2010 research tie (L058). Not independently validated."><input type="checkbox" id="sv-tied"> 2010 tied horizons (research)</label></div>
       <div class="row"><button class="btn on" id="sv-inspect" title="Open a side pane with a 2D section or time slice and a 3D cube of this survey">Inspect seismic ▸</button></div>
       <p class="tip" id="svnote" style="margin:4px 0">${depthPreviewNote}</p>
       <p class="tip" style="margin:4px 0">${[...new Set(SV.map((x) => x.credit))].map(esc).join("<br>")}</p>` : '<p class="tip">No seismic indexed yet (backend: python -m se.seismic.index).</p>', false);

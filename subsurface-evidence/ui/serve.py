@@ -17,7 +17,8 @@ app.add_middleware(GZipMiddleware, minimum_size=2000)  # the proxied JSON and th
 async def proxy(path: str, req: Request):
     async with httpx.AsyncClient(timeout=1800) as c:
         r = await c.request(req.method, f"{BACKEND}/api/{path}", params=req.query_params, content=await req.body(), headers={"content-type": req.headers.get("content-type", "application/json")} if req.method == "POST" else None)
-    return Response(r.content, r.status_code, media_type=r.headers.get("content-type"))
+    headers = {"content-disposition": r.headers["content-disposition"]} if "content-disposition" in r.headers else None
+    return Response(r.content, r.status_code, headers=headers, media_type=r.headers.get("content-type"))
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True))

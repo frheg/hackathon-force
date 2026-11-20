@@ -36,9 +36,29 @@ def _json(p):
     return json.loads(p.read_text()) if p.exists() else None
 
 
-@lru_cache(maxsize=8)
-def _region(region: str) -> dict:
+def _dir(region: str, build: str | None):
+    if region not in NAMES:
+        raise ValueError("unknown region")
     d = EARTH / region
+    if build == "legacy":
+        return d
+    store = d / ".snapshots"
+    if build is None:
+        try:
+            build = (store / "active").read_text().strip()
+        except FileNotFoundError:
+            return d
+    if not re.fullmatch(r"[a-f0-9]{12}", build):
+        raise ValueError("invalid build ID")
+    d = store / build
+    receipt = _json(d / "snapshot.json")
+    if not receipt or receipt.get("schema") != 2 or receipt.get("build") != build or receipt.get("region") != region:
+        raise ValueError("snapshot receipt missing or incompatible")
+    return d
+
+
+@lru_cache(maxsize=4)
+def _region(d) -> dict:
     if not (d / "targets" / "report.json").exists():
         return {}
     rules = {r["id"]: r for r in (_json(d / "earth_rules_report.json") or [])}
@@ -52,8 +72,8 @@ def _num(v, d=3):
     return round(float(v), d) if v is not None and np.isfinite(float(v)) else None
 
 
-def method(region: str, target: str) -> dict | None:
-    R = _region(region); e = (R.get("report") or {}).get(target)
+def method(region: str, target: str, R: dict) -> dict | None:
+    e = (R.get("report") or {}).get(target)
     if not e:
         return None
     if target in ("co2_storage", "chance_of_success"):
@@ -72,16 +92,20 @@ def method(region: str, target: str) -> dict | None:
             "text": text + " " + METHOD["published"] + " " + METHOD["probability"] + " " + METHOD["support"], "excerpted": False}
 
 
-def cell(region: str, target: str, k: int) -> dict | None:
-    R = _region(region)
+def cell(region: str, target: str, k: int, R: dict) -> dict | None:
     if not R or not 0 <= k < len(R["cells"]):
         return None
-    c = R["cells"].iloc[k]; p = R["dir"] / "targets" / f"{target}.npz"; d = dict(np.load(p)) if p.exists() else {}
+    c = R["cells"].iloc[k]; p = R["dir"] / "targets" / f"{target}.npz"
+    d = {}
+    if target in R["report"] and p.exists():
+        with np.load(p) as arrays:
+            d = {key: arrays[key][k] for key in ("p", "p05", "p95", "support", "limit", "reservoir", "seal", "charge", "trap") if key in arrays}
     t = [f"Unit {c.unit} (group {c.group}), {c.top:.0f}-{c.base:.0f} m TVDSS ({c.thick:.0f} m, {c.zb:.0f} m below the seabed), column at {c.x:.0f}, {c.y:.0f} km (EPSG:3035)."]
     if d:
-        t.append(f"{target}: p {_num(d['p'][k])} (90 percent range {_num(d['p05'][k])}-{_num(d['p95'][k])}), support {_num(d['support'][k], 2)}.")
+        t.append(f"{target}: {'screening score' if target in ('chance_of_success', 'co2_storage') else 'probability'} {_num(d['p'])} "
+                 f"(stored range {_num(d['p05'])}-{_num(d['p95'])}), support {_num(d['support'], 2)}.")
         if "limit" in d:
-            el = ["reservoir", "seal", "charge", "trap"]; t.append("Elements: " + ", ".join(f"{e} {_num(d[e][k])}" for e in el if e in d) + f"; limiting: {el[int(d['limit'][k])]}.")
+            el = ["reservoir", "seal", "charge", "trap"]; t.append("Elements: " + ", ".join(f"{e} {_num(d[e])}" for e in el if e in d) + f"; limiting: {el[int(d['limit'])]}." )
     for col, lab in (("T_C", "temperature C"), ("seal_m", "shale within 300 m above, m"), ("sand", "sand share")):
         if col in c and pd.notna(c[col]):
             t.append(f"{lab}: {_num(c[col], 2)}.")
@@ -94,8 +118,8 @@ def cell(region: str, target: str, k: int) -> dict | None:
     return {"ref": "M:cell", "kind": "model", "document": f"Earth model · {name(region)} · selected cell {k}", "page": None, "text": " ".join(x for x in t if x), "excerpted": False}
 
 
-def rules(region: str, target: str) -> list[dict]:
-    R = _region(region); out = []
+def rules(region: str, target: str, R: dict) -> list[dict]:
+    out = []
     for rid in TARGET_RULES.get(target, []):
         r = R.get("rules", {}).get(rid)
         if not r:
@@ -107,8 +131,8 @@ def rules(region: str, target: str) -> list[dict]:
     return out
 
 
-def well(region: str, wellbore: str) -> dict | None:
-    w = _region(region).get("wells")
+def well(region: str, wellbore: str, R: dict) -> dict | None:
+    w = R.get("wells")
     if w is None or w.empty or wellbore not in set(w.wellbore):
         return None
     r = w.set_index("wellbore").loc[wellbore]
@@ -121,8 +145,8 @@ def well(region: str, wellbore: str) -> dict | None:
             "excerpted": False}
 
 
-def unit(region: str, target: str, name: str) -> dict | None:
-    R = _region(region); p = R.get("dir") and R["dir"] / "targets" / f"{target}_obs.parquet"
+def unit(region: str, target: str, name: str, R: dict) -> dict | None:
+    p = R.get("dir") and R["dir"] / "targets" / f"{target}_obs.parquet"
     if not p or not p.exists():
         return None
     o = pd.read_parquet(p); u = o[o.unit == name]
@@ -136,17 +160,32 @@ def unit(region: str, target: str, name: str) -> dict | None:
                     f"{cu.top.median():.0f} m TVDSS median top, {cu.thick.median():.0f} m median thickness.", "excerpted": False}
 
 
-def evidence(region: str, target: str, cell_id: int | None, wellbores: list[str], question: str) -> list[dict]:
+def evidence(region: str, target: str, cell_id: int | None, wellbores: list[str], question: str, build: str | None = None) -> list[dict]:
     """All earth-model excerpts for a question: method and skill of the target, the selected cell, rules, named wells and units."""
-    if not region or not _region(region):
+    unavailable = {"ref": "M:snapshot", "kind": "model", "document": "Earth model · Scene unavailable", "page": None,
+                   "text": "The scene's build or selected cell could not be pinned. Reload the 3D view; do not infer cell evidence from a different build.",
+                   "excerpted": False}
+    try:
+        d = _dir(region, build)
+    except (ValueError, FileNotFoundError):
+        return [unavailable]
+    R = _region(d)
+    if not R:
+        return [unavailable] if build else []
+    if target not in R["report"]:
         return []
-    out = [x for x in (method(region, target), cell(region, target, cell_id) if cell_id is not None else None) if x]
-    out += rules(region, target)
-    out += [x for x in (well(region, w) for w in wellbores[:2]) if x]
-    names = set(_region(region)["cells"].unit)
+    frozen = d.parent.name == ".snapshots"
+    selected = None if cell_id is None else unavailable if frozen and build is None else cell(region, target, cell_id, R)
+    out = [x for x in (method(region, target, R), selected) if x]
+    out += rules(region, target, R)
+    out += [x for x in (well(region, w, R) for w in wellbores[:2]) if x]
+    names = set(R["cells"].unit)
     key = lambda n: n.split(" ")[0]  # "UTSIRA FM" -> "UTSIRA"; generic first words are not names
     for n in [n for n in names if len(key(n)) >= 4 and key(n) not in GENERIC and re.search(r"\b" + re.escape(key(n)) + r"\b", question, re.I)][:2]:
-        x = unit(region, target, n)
+        x = unit(region, target, n, R)
         if x:
             out.append(x)
+    for item in out:
+        if item is not unavailable:
+            item["document"] += f" · {'build ' + d.name if frozen else 'legacy, unpinned'}"
     return out

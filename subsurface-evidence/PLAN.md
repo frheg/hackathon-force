@@ -156,14 +156,18 @@ Each factor is a rule in `earth.yaml` with a data test, and enters a model only 
 
 ### P11 Rock physics (owner, 2026-11-20)
 - [x] **P11.1 Rock physics template on the FORCE wells.** (L077) Friable sand and contact cement with Gassmann brine, oil, gas; cement index and fluid signal per sample; tests R-RPT-CEMENT (agrees, pooled) and R-RPT-FLUID (not testable); view under Subsurface model.
-- [ ] **P11.2 Shear velocity where missing.** Greenberg-Castagna Vs prediction, tested on the 32 wells with shear logs, to extend the template.
+- [ ] **P11.2 Shear velocity where missing (deferred).** Greenberg-Castagna Vs could extend display coverage if validated against measured shear logs. It adds no independent fluid or cement labels; do not use it to rescue the fluid test.
+- [x] **P11.3 Test physics against measured core.** L081 compares fixed density porosity, raw logs and the same logs plus physics on held-out blocks. No reliable incremental gain; retain the template as a diagnostic only.
 
 ### P12 Close the gaps an expert would raise (owner, 2026-11-20)
 - [ ] **P12.1 Sensitivity of untested constants.** Each constant without a data test (kernel lengths, shrinkage counts, selection margin, oil-window temperature, trap floor, NTG and thickness sigmas, storage efficiency, support constants, correlation lengths) set low and high; what moves: held-out gain, published form, CoS test, CO2 totals, support. A tornado table per region.
 - [ ] **P12.2 Physical inputs refitted inside each fold.** Temperature, porosity trend, burial and the maturity factors fitted without the held-out wells; gain compared with the shared fit. Surface-based features: show whether any published model uses them.
 - [ ] **P12.3 Coefficient uncertainty.** Cluster-bootstrap refits (whole wells) combined with the input Monte Carlo; how much wider the 90 percent ranges get.
-- [ ] **P12.4 Atomic artefacts.** The targets step writes to a staging folder and swaps it in; single files by write-then-rename. No reader ever sees two grids.
+- [x] **P12.4 Versioned artefacts.** Freeze an idle regional build, verify dependencies and cell order, then switch one pointer. The 3D view, cell lookups, export and Strata Desk use the same snapshot. Legacy regions remain mutable; Horda activation is a separate release step. See L078.
 - [ ] **P12.5 Verify sources.** Every sourced_unverified reference resolved (Crossref for DOIs, the page for URLs): title, authors and year checked; status raised to sourced only with a quote read from the source.
+- [x] **P12.6 Complete the frozen Horda demo locally.** L082 restores porosity, the legacy-well screen and versioned export in `f46ffd5abca4` without changing probability arrays. Activation is a separate release step.
+- [x] **P12.7 Audit Smeaheia by borehole and measured depth.** L080 inventories local curves, plugs, bounded core–log pairs and report/pick references; missing controls remain explicit in 3D.
+- [ ] **P12.8 Verify independent Smeaheia ties (external controls required).** Obtain original checkshots/VSP, directional surveys and processing datums; resolve the T2 and TNE01 identities and depth/time references. Reserve independent holdouts before fitting. See the [acquisition list](../docs/seismic-data.md#depth-controls-to-request-first).
 
 ## 5. Done for the pilot
 

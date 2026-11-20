@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 
 import numpy as np
@@ -9,6 +10,9 @@ from se.api import provenance
 from se.config import DATA, OUT
 from se.modeling.seismic_coverage import build as build_coverage
 from se.modeling.seismic_coverage import sites_in_trace_hull
+from se.modeling.smeaheia_support import RESULT as SMEAHEIA_SUPPORT_OUT
+from se.modeling.smeaheia_support import build as build_support
+from se.modeling.smeaheia_support import md_spans
 from se.modeling.smeaheia_velocity import build
 from se.modeling.velocity import HorizonTie, WellTie, evaluate
 
@@ -84,3 +88,33 @@ def test_local_coverage_counts_unique_wellheads_across_processing_variants(tmp_p
     control = next(w for w in gn["wells"] if w["npdid"] == 5839)
     assert control["force_train_logs"] and "not established" in control["time_depth_tie"]
     assert data["distinct_wells_in_footprints"] < sum(s["well_count"] for s in data["surveys"])
+
+
+def test_md_inventory_does_not_bridge_large_sample_gaps():
+    assert md_spans([11, np.nan, 2, 0, 11]) == [
+        {"from_md_m": 0.0, "to_md_m": 2.0, "samples": 2},
+        {"from_md_m": 11.0, "to_md_m": 11.0, "samples": 2},
+    ]
+
+
+def test_support_keeps_parent_t2_distinct_and_checks_documented_tie(tmp_path, monkeypatch):
+    if not all((OUT / p).is_file() for p in (provenance.RELATIVE_OUT, provenance.COVERAGE_OUT)):
+        pytest.skip("local seismic evidence receipts not built")
+    audit = build_support(DATA, OUT)
+    assert not audit["activate_overlay"] and audit["independent_ties_verified"] == 0
+    by_id = {w["npdid"]: w for s in audit["surveys"] for w in s["wells"]}
+    assert by_id[2918]["published_picks"][0]["source_well"] == "NO 32/4-1 T2"
+    assert by_id[2918]["tie_status"] == "T2 site context only"
+    assert by_id[447]["porosity_log_pairs"]["rows"] == 577
+    assert by_id[20]["porosity_log_pairs"]["rows"] == 796
+    assert not by_id[20]["in_hull"] and not by_id[20]["raw_independent_time_depth"]
+    assert "1338" in by_id[20]["report_reference"]["note"]
+    api = FastAPI()
+    api.include_router(provenance.router)
+    monkeypatch.setattr(provenance, "OUT", tmp_path)
+    client = TestClient(api)
+    assert client.get("/api/provenance/smeaheia-support").status_code == 404
+    path = tmp_path / SMEAHEIA_SUPPORT_OUT
+    path.parent.mkdir()
+    path.write_text(json.dumps(audit))
+    assert client.get("/api/provenance/smeaheia-support").json()["independent_ties_verified"] == 0

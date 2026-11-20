@@ -429,3 +429,35 @@ def test_strata_earth_view_gets_model_evidence(monkeypatch):
     assert r.status_code == 200, r.text
     refs = [s["ref"] for s in r.json()["sources"]]
     assert "M:method-hydrocarbons" in refs and "M:cell" in refs and any(x.startswith("M:R-") for x in refs)
+
+
+def test_strata_scene_never_uses_another_builds_cells(tmp_path, monkeypatch):
+    import json
+
+    import numpy as np
+    import pandas as pd
+
+    from sketches import earthctx
+
+    monkeypatch.setattr(earthctx, "EARTH", tmp_path)
+    store = tmp_path / "pilot" / ".snapshots"
+    old, new = "a" * 12, "b" * 12
+    for build, p in ((old, 0.3), (new, 0.8)):
+        d = store / build
+        t = d / "targets"
+        t.mkdir(parents=True)
+        (d / "snapshot.json").write_text(json.dumps({"schema": 2, "region": "pilot", "build": build}))
+        (t / "report.json").write_text(json.dumps({"hydrocarbons": {"published": "model"}}))
+        pd.DataFrame([dict(unit="U", group="G", top=1, base=2, thick=1, zb=1, x=1, y=1)]).to_parquet(t / "cells.parquet")
+        np.savez(t / "hydrocarbons.npz", p=[p], p05=[p], p95=[p], support=[0.6])
+    (store / "active").write_text(new)
+
+    def evidence(build):
+        return {s["ref"]: s for s in earthctx.evidence("pilot", "hydrocarbons", 0, [], "", build)}
+
+    assert "probability 0.3" in evidence(old)["M:cell"]["text"]
+    assert old in evidence(old)["M:cell"]["document"]
+    assert "probability 0.8" in evidence(new)["M:cell"]["text"]
+    for build in (None, "0" * 12):
+        actual = evidence(build)
+        assert "M:cell" not in actual and "M:snapshot" in actual

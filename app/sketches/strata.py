@@ -53,6 +53,8 @@ class Scene(BaseModel):
     view: Tag = ""
     earth_region: Tag = ""
     earth_target: Tag = ""
+    earth_build: str | None = Field(None, pattern=r"^(?:[a-f0-9]{12}|legacy)$")
+    earth_wellbore: Tag = ""
     cell: int | None = Field(None, ge=0)
     probability_at_least: float | None = None
 
@@ -78,6 +80,8 @@ def sources(body: Ask) -> list[dict]:
         query = f"{prev} {query}"
     if not any(ents.values()) and body.scene.interval:
         ents["wellbores"] = [norm(body.scene.interval.wellbore)]
+    if not any(ents.values()) and body.scene.earth_wellbore:
+        ents["wellbores"] = [norm(body.scene.earth_wellbore)]
     ents["wellbores"] = ents["wellbores"][:2]
 
     df, bm = reports.corpus()
@@ -95,7 +99,7 @@ def sources(body: Ask) -> list[dict]:
         evidence.append({**passage, "kind": "report", "text": passage["text"][:1200], "excerpted": len(passage["text"]) > 1200})
     sc = body.scene; region = sc.earth_region or {"pilot": "pilot"}.get(sc.region, "")
     if region:  # the earth model's own numbers, rules and methods for this question (model outputs, cited [M:...])
-        evidence += earthctx.evidence(region, sc.earth_target or "hydrocarbons", sc.cell, ents["wellbores"], body.q)
+        evidence += earthctx.evidence(region, sc.earth_target or "hydrocarbons", sc.cell, ents["wellbores"], body.q, sc.earth_build)
     for i, name in enumerate(ents["wellbores"], 1):
         card = wells.card(name)
         if not card["header"]:

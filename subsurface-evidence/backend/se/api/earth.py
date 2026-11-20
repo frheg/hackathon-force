@@ -1,25 +1,57 @@
 """Earth model API for the pilot (PLAN P7.1, LOG L070): surfaces with thickness, target probabilities with support, true well paths,
 and the evidence chain behind one cell. Coordinates: EPSG:3035 km; depth: TVDSS m (positive down)."""
 import json
+from contextvars import ContextVar
 from functools import lru_cache
+from pathlib import Path
+from typing import Annotated
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from se.config import OUT, REGIONS
+from se.earth import snapshot
 
-router = APIRouter(prefix="/api/earth")
+_pinned = ContextVar[tuple[str, Path] | None]("earth_snapshot", default=None)
+
+
+def _resolve(region: str, build: str | None = None) -> Path:
+    if region not in REGIONS:
+        raise HTTPException(404, "no such region")
+    try:
+        return snapshot.resolve(OUT / "earth" / region, build)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(404 if build else 503, str(exc)) from exc
+
+
+BuildQuery = Annotated[str | None, Query(pattern=f"^(?:{snapshot.BUILD_ID}|{snapshot.LEGACY})$")]
+
+
+async def _build_scope(region: str = "pilot", build: BuildQuery = None):
+    token = _pinned.set((region, _resolve(region, build)))
+    try:
+        yield
+    finally:
+        _pinned.reset(token)
+
+
+router = APIRouter(prefix="/api/earth", dependencies=[Depends(_build_scope)])
 
 
 def _dir(region: str):
     """Artefacts of one region (P8); a region shows up once its pipeline has written targets."""
-    if region not in REGIONS:
-        raise HTTPException(404, "no such region")
-    d = OUT / "earth" / region
+    pinned = _pinned.get()
+    d = pinned[1] if pinned and pinned[0] == region else _resolve(region)
     if not (d / "targets" / "cells.parquet").exists():
         raise HTTPException(404, f"region {region} is not built yet")
     return d
+
+
+def _build(d: Path) -> str | None:
+    return d.name if d.parent.name == snapshot.STORE else None
+
+
 TARGETS = ["hydrocarbons", "oil", "gas", "chance_of_success", "reservoir", "overpressure", "co2_storage", "green_clay", "calcareous_clay", "sandy_delta"]
 TITLES = {"chance_of_success": "Chance of success (reservoir x seal x charge x trap)", "hydrocarbons": "Hydrocarbons", "oil": "Oil (oil or oil and gas)", "gas": "Gas (gas or oil and gas)", "reservoir": "Reservoir quality (porosity > 15 %, permeability > 10 mD)", "overpressure": "Overpressure (pore pressure >= 1.20 g/cm3)",
           "co2_storage": "CO2 storage (dense CO2, reservoir, seal, no overpressure)", "green_clay": "Green clay in described clay", "calcareous_clay": "Calcareous clay",
@@ -30,9 +62,13 @@ def _r(a, d=1):
     return [None if not np.isfinite(v) else round(float(v), d) for v in np.asarray(a, float).ravel()]
 
 
-@lru_cache(maxsize=4)
 def _surf(region="pilot"):
-    s = dict(np.load(_dir(region) / "surfaces.npz")); g = _dir(region) / "grid.npz"
+    return _load_surfaces(_dir(region))
+
+
+@lru_cache(maxsize=4)
+def _load_surfaces(d: Path):
+    s = dict(np.load(d / "surfaces.npz")); g = d / "grid.npz"
     if g.exists():  # the grid's mask: the region box and the offshore NCS (shelf.py), so no sheet is drawn over land
         gi = np.load(g)["inside"]
         if gi.shape == s["inside"].shape:
@@ -40,25 +76,42 @@ def _surf(region="pilot"):
     return s
 
 
-@lru_cache(maxsize=4)
 def _cells(region="pilot") -> pd.DataFrame:
-    return pd.read_parquet(_dir(region) / "targets" / "cells.parquet")
+    return _load_cells(_dir(region))
+
+
+@lru_cache(maxsize=4)
+def _load_cells(d: Path):
+    return pd.read_parquet(d / "targets" / "cells.parquet")
 
 
 @lru_cache(maxsize=32)
-def _target(t: str, region="pilot") -> dict:
+def _load_target(d: Path, t: str) -> dict:
     if t not in TARGETS:
         raise HTTPException(404, "no such target")
-    d = dict(np.load(_dir(region) / "targets" / f"{t}.npz"))
-    if len(d["p"]) != len(_cells(region)):  # written by a rebuild that has not finished: never mix two grids
-        _target.cache_clear(); _cells.cache_clear()
-        raise HTTPException(503, f"{region} is being rebuilt; retry in a few minutes")
-    return d
+    path = d / "targets" / f"{t}.npz"
+    if not path.is_file():
+        raise HTTPException(404, "target not built in this region")
+    with np.load(path) as arrays:
+        value = dict(arrays)
+    cells = _load_cells(d)
+    if len(value["p"]) != len(cells) or any(not np.array_equal(value[k], cells[k]) for k in ("i", "j", "label")):
+        _load_cells.cache_clear()
+        raise HTTPException(503, "target and cell identities do not match")
+    return value
+
+
+def _target(t: str, region="pilot") -> dict:
+    return _load_target(_dir(region), t)
+
+
+def _report(region="pilot") -> dict:
+    return _load_report(_dir(region))
 
 
 @lru_cache(maxsize=4)
-def _report(region="pilot") -> dict:
-    return json.loads((_dir(region) / "targets" / "report.json").read_text())
+def _load_report(d: Path) -> dict:
+    return json.loads((d / "targets" / "report.json").read_text())
 
 
 @router.get("/regions")
@@ -66,23 +119,27 @@ def regions():
     """All regions, which are built, and their held-out skill per target (the P8 comparison)."""
     out = []
     for r, b in REGIONS.items():
-        d = OUT / "earth" / r; built = (d / "targets" / "report.json").exists()
+        d = _resolve(r); built = (d / "targets" / "report.json").exists()
         rep = json.loads((d / "targets" / "report.json").read_text()) if built else {}
         run = json.loads((d / "run_report.json").read_text()) if (d / "run_report.json").exists() else {}
-        out.append({"id": r, "title": b["title"], "short": b.get("short", b["title"]), "lat": b["lat"], "lon": b["lon"], "step_km": b["step_km"], "built": built,
+        out.append({"id": r, "title": b["title"], "short": b.get("short", b["title"]), "lat": b["lat"], "lon": b["lon"], "step_km": b["step_km"], "built": built, "build": _build(d),
                     "skill": {t: {k: rep[t].get(k) for k in ("gain_model_vs_base", "gain_unit_prior_vs_base", "published", "rows", "wells", "features")}
                               | {"forward_in_time": (rep[t].get("time_test") or {}).get("gain_selected_features")} for t in TARGETS if t in rep and t != "co2_storage"},
                     "steps": {k: v.get("status") for k, v in run.items() if isinstance(v, dict) and "status" in v}})
     return out
 
 
-@lru_cache(maxsize=8)
 def _presets(region: str) -> dict:
+    return _load_presets(_dir(region))
+
+
+@lru_cache(maxsize=8)
+def _load_presets(d: Path) -> dict:
     """Per target: the 90th percentile of the cell probabilities (the default threshold: the top 10 percent of cells, so a rare target is
     not hidden behind a fixed 0.5) and the groups where its probability is highest (the suggested strata to show)."""
-    C = _cells(region); out = {}
+    C = _load_cells(d); out = {}
     for t in TARGETS:
-        p = _dir(region) / "targets" / f"{t}.npz"
+        p = d / "targets" / f"{t}.npz"
         if not p.exists():
             continue
         v = np.load(p)["p"].astype(float)
@@ -98,7 +155,8 @@ def meta(region: str = "pilot"):
     EARTH = _dir(region); s = _surf(region); rep = _report(region)
     names, level = [str(n) for n in s["names"]], [str(l) for l in s["level"]]
     col = json.loads((EARTH / "column.json").read_text())
-    return {"region": region, "pilot": REGIONS[region], "x": _r(s["x"], 1), "y": _r(s["y"], 1), "horizons": [{"name": n, "level": l} for n, l in zip(names, level)],
+    return {"region": region, "build": _build(EARTH), "pilot": REGIONS[region], "x": _r(s["x"], 1), "y": _r(s["y"], 1), "horizons": [{"name": n, "level": l} for n, l in zip(names, level)],
+            "export_available": (EARTH / "export" / f"{region}_all.zip").is_file(),
             "groups": [{"group": c["group"], "formations": [f["name"] for f in c["formations"] if f["model"]]} for c in col["groups"] if c["model"]],
             "targets": [{"id": t, "title": TITLES[t], **({k: rep[t].get(k) for k in ("published", "gain_model_vs_base", "gain_unit_prior_vs_base", "base_rate", "rows", "wells", "calibrated", "why", "checks", "composite",
                                                                               "features", "time_test", "legacy_wells", "test", "limiting_share", "family", "families",
@@ -107,6 +165,14 @@ def meta(region: str = "pilot"):
             "conditional_on": rep.get("_conditional_on"), "presets": _presets(region),
             "co2_capacity": json.loads((EARTH / "targets" / "co2_capacity.json").read_text()) if (EARTH / "targets" / "co2_capacity.json").exists() else None,
             "frame": "EPSG:3035 km; depth TVDSS m below sea level, positive down", "rules": json.loads((EARTH / "earth_rules_report.json").read_text()) if (EARTH / "earth_rules_report.json").exists() else []}
+
+
+@router.get("/snapshot")
+def snapshot_receipt(region: str = "pilot"):
+    path = _dir(region) / snapshot.RECEIPT
+    if not path.is_file():
+        raise HTTPException(404, "this region has not been frozen")
+    return json.loads(path.read_text())
 
 
 @router.get("/surfaces")
@@ -122,7 +188,7 @@ def surfaces(names: str = "", step: int = 2, region: str = "pilot"):
             continue
         k = all_names.index(n); m = np.where(inside, s["mean"][k][sl], np.nan); sd = np.where(inside, s["sd"][k][sl], np.nan)
         out.append({"name": n, "level": str(s["level"][k]), "z": [_r(r, 0) for r in m], "sd": [_r(r, 0) for r in sd], "near_km": [_r(r, 1) for r in np.where(inside, s["near_km"][k][sl], np.nan)]})
-    return {"x": _r(s["x"][::step]), "y": _r(s["y"][::step]), "surfaces": out}
+    return {"build": _build(_dir(region)), "x": _r(s["x"][::step]), "y": _r(s["y"][::step]), "surfaces": out}
 
 
 @router.get("/target")
@@ -136,7 +202,7 @@ def target(t: str, pmin: float = 0.5, smin: float = 0.0, units: str = "", limit:
     if len(idx) > limit:  # keep the most supported, most likely cells
         idx = idx[np.argsort(-(d["p"][idx] * (0.2 + d["support"][idx])))[:limit]]
     c = C.iloc[idx]
-    return {"target": t, "title": TITLES[t], "n": int(m.sum()), "shown": int(len(idx)), "x": _r(c.x), "y": _r(c.y), "top": _r(c.top, 0), "base": _r(c.base, 0),
+    return {"build": _build(_dir(region)), "target": t, "title": TITLES[t], "n": int(m.sum()), "shown": int(len(idx)), "x": _r(c.x), "y": _r(c.y), "top": _r(c.top, 0), "base": _r(c.base, 0),
             "unit": c.unit.tolist(), "p": _r(d["p"][idx], 3), "p05": _r(d["p05"][idx], 3), "p95": _r(d["p95"][idx], 3), "support": _r(d["support"][idx], 2), "cell": idx.tolist()}
 
 
@@ -146,37 +212,47 @@ def wells(step_m: float = 25.0, region: str = "pilot"):
     EARTH = _dir(region)
     w = pd.read_parquet(EARTH / "wells.parquet"); w = w[w.pilot]  # "pilot" = inside the region's box
     tops = pd.read_parquet(EARTH / "tops.parquet"); have = set(tops.wellbore)
-    paths = pd.read_parquet(EARTH / "force_paths.parquet")
+    paths = dict(tuple(pd.read_parquet(EARTH / "force_paths.parquet").groupby("wellbore")))
+    intervals = dict(tuple(tops.groupby("wellbore")))
     out = []
     for r in w[w.wellbore.isin(have)].itertuples():
-        p = paths[paths.wellbore == r.wellbore]
-        if len(p):
+        datum = dict(zip(("rkb_m", "water_depth_m", "td_md_m", "end_tvd_m", "end_tvd_sd_m"),
+                         _r([r.kb, r.wd, r.td, r.tvd_est, r.tvd_sd], 1)))
+        p = paths.get(r.wellbore)
+        if p is not None:
             p = p.iloc[:: max(1, int(step_m))]
-            out.append({"name": r.wellbore, "source": "FORCE path", "x": _r(p.x, 3), "y": _r(p.y, 3), "z": _r(p.tvdss, 0)})
+            path = {"source": "FORCE path", "x": _r(p.x, 3), "y": _r(p.y, 3), "z": _r(p.tvdss, 0)}
         else:
-            t = tops[tops.wellbore == r.wellbore]
-            z1 = float(np.nanmax(t.bot_tvdss.fillna(t.top_tvdss))) if len(t) else float(r.wd or 0) + 500
-            out.append({"name": r.wellbore, "source": "FactPages (approximate)", "x": [round(float(r.x), 3)] * 2, "y": [round(float(r.y), 3)] * 2, "z": [round(float(r.wd or 0)), round(z1)]})
+            t = intervals[r.wellbore]
+            z1 = t.bot_tvdss.fillna(t.top_tvdss).max()
+            path = {"source": "FactPages (approximate)", "x": _r([r.x, r.x], 3), "y": _r([r.y, r.y], 3), "z": _r([r.wd, z1], 0)}
+        out.append({"name": r.wellbore, **path, **datum, "head": _r([r.x, r.y, r.wd], 3), "depth_source": r.source})
     return out
 
 
 @router.get("/cell")
-def cell(t: str, cell: int, region: str = "pilot"):
+def cell(t: str, cell: int, region: str = "pilot", build: BuildQuery = None):
     """The evidence chain behind one cell: where it is, what it is, its properties, the target probability with its range and support,
     the observations of the same unit nearest to it, and the rules that bear on the target."""
-    EARTH = _dir(region); C = _cells(region)
+    EARTH = _dir(region)
+    if build is None and _build(EARTH):
+        raise HTTPException(409, "select a cell from a scene with an explicit build ID")
+    C = _cells(region)
     if not 0 <= cell < len(C):
         raise HTTPException(404, "no such cell")
     c = C.iloc[cell]; d = _target(t, region); rep = _report(region).get(t, {})
-    out = {"cell": int(cell), "unit": c.unit, "group": c.group, "x_km": round(float(c.x), 1), "y_km": round(float(c.y), 1), "top_m": round(float(c.top)), "base_m": round(float(c.base)),
+    out = {"cell": int(cell), "build": _build(EARTH), "unit": c.unit, "group": c.group, "x_km": round(float(c.x), 1), "y_km": round(float(c.y), 1), "top_m": round(float(c.top)), "base_m": round(float(c.base)),
            "thickness_m": round(float(c.thick)), "depth_below_seabed_m": round(float(c.zb)), "target": t, "title": TITLES[t],
            "p": round(float(d["p"][cell]), 3), "p05": round(float(d["p05"][cell]), 3), "p95": round(float(d["p95"][cell]), 3), "support": round(float(d["support"][cell]), 2),
            "published": rep.get("published"), "held_out": {k: rep.get(k) for k in ("gain_model_vs_base", "gain_unit_prior_vs_base", "base_rate", "rows", "wells", "use_platt")},
            "coefficients": rep.get("coefficients")}
     s = _surf(region); names = [str(n) for n in s["names"]]
     if c.group in names:
-        k = names.index(c.group); out["group_top_sd_m"] = round(float(s["sd"][k][int(c.j), int(c.i)])); out["group_top_nearest_pick_km"] = round(float(s["near_km"][k][int(c.j), int(c.i)]), 1)
-    if t != "co2_storage":
+        k = names.index(c.group)
+        out["group_top_sd_m"], out["group_top_nearest_pick_km"] = (
+            _r([s[field][k, int(c.j), int(c.i)]], digits)[0] for field, digits in (("sd", 0), ("near_km", 1))
+        )
+    if t not in ("co2_storage", "chance_of_success"):
         op = EARTH / "targets" / f"{t}_obs.parquet"
         o = pd.read_parquet(op) if op.exists() else pd.DataFrame(columns=["wellbore", "unit", "x", "y", "ev", "w"])
         same = o[o.unit == c.unit].assign(d_km=lambda q: np.hypot(q.x - c.x, q.y - c.y)).sort_values("d_km").head(8)
@@ -192,11 +268,11 @@ def cell(t: str, cell: int, region: str = "pilot"):
             out["co2_capacity_kt"] = round(float(np.load(cp)["value"][cell]), 1)
         lp = EARTH / "targets" / "legacy_wells.npz"
         if lp.exists():
-            out["legacy_wells"] = int(np.load(lp)["value"][cell]); out["legacy_note"] = (rep.get("legacy_wells") or {}).get("what")
+            out["legacy_wells"] = int(np.load(lp)["value"][cell]); out["legacy_note"] = LEGACY_NOTE
     if (EARTH / "factors.npz").exists():  # petroleum-system factors at this cell (P9), whether or not the target's model uses them
         from se.earth.factors import at
 
-        f = at(C.iloc[[cell]]).iloc[0]
+        f = at(C.iloc[[cell]], root=EARTH).iloc[0]
         out["factors"] = {"kitchen_km": round(float(np.expm1(f.lkit)), 1), "kitchen_at_max_burial_km": round(float(np.expm1(f.lkit_max)), 1), "gas_kitchen_km": round(float(np.expm1(f.lkit_gas)), 1),
                           "source_mature_below_p": round(float(f.mature), 2), "fault_km": round(float(np.expm1(f.lfault)), 1), "on_structural_high": bool(f.on_high),
                           "closure_m": round(float(np.expm1(f.lclos) * 10)), "salt_km": round(float(f.salt), 2),
@@ -220,9 +296,10 @@ def tied(step: int = 2, region: str = "pilot"):
     sl = (slice(None, None, step), slice(None, None, step))
     out = []
     for k, n in enumerate(t["names"]):
-        w = t["weight"][k][sl]; z = np.where(w > 0, t["mean"][k][sl], np.nan)
-        out.append({"name": str(n), "z": [_r(r, 0) for r in z], "sd": [_r(r, 0) for r in np.where(w > 0, t["sd"][k][sl], np.nan)]})
-    return {"lat": [_r(r, 4) for r in s["lat"][sl]], "lon": [_r(r, 4) for r in s["lon"][sl]], "surfaces": out,
+        valid = (t["weight"][k][sl] > 0) & s["inside"][sl]
+        z = np.where(valid, t["mean"][k][sl], np.nan)
+        out.append({"name": str(n), "z": [_r(r, 0) for r in z], "sd": [_r(r, 0) for r in np.where(valid, t["sd"][k][sl], np.nan)]})
+    return {"build": _build(_dir(region)), "lat": [_r(r, 4) for r in s["lat"][sl]], "lon": [_r(r, 4) for r in s["lon"][sl]], "surfaces": out,
             "source": "Smeaheia Key_Horizons_2010 (Equinor, Gassnova), tied to wells (L058); depth below sea level"}
 
 
@@ -239,13 +316,14 @@ def prop(name: str = "gamma_ray", units: str = "", limit: int = 30000, region: s
     idx = np.where(m)[0]; idx = idx[:: max(1, len(idx) // limit)][:limit]
     c = C.iloc[idx]
     test = json.loads((EARTH / "targets" / "gamma_ray_report.json").read_text()) if name == "gamma_ray" else \
-        _report(region).get("co2_storage", {}).get("legacy_wells") if name == "legacy_wells" else \
+        {"what": LEGACY_NOTE} if name == "legacy_wells" else \
         {"sigma_pct": float(d["sd"][0])} if name == "porosity" else {"what": "expected kt of CO2 per cell at the median storage efficiency (P10.4)"}
-    return {"name": name, "unit_of_value": PROPS[name], "n": int(m.sum()), "shown": int(len(idx)), "x": _r(c.x), "y": _r(c.y), "top": _r(c.top, 0), "base": _r(c.base, 0), "unit": c.unit.tolist(),
+    return {"build": _build(EARTH), "name": name, "unit_of_value": PROPS[name], "n": int(m.sum()), "shown": int(len(idx)), "x": _r(c.x), "y": _r(c.y), "top": _r(c.top, 0), "base": _r(c.base, 0), "unit": c.unit.tolist(),
             "value": _r(d["value"][idx], 1), "sd": _r(d["sd"][idx], 1), "cell": idx.tolist(), "test": test}
 
 
-PROPS = {"gamma_ray": "gAPI", "legacy_wells": "wellbores within 2 km drilled through the unit", "porosity": "percent", "co2_capacity": "kt CO2 per cell"}
+LEGACY_NOTE = "Counts wellheads within 2 km whose estimated or reported end depth is below the cell top. Not proof of a trajectory intersection or a leak."
+PROPS = {"gamma_ray": "gAPI", "legacy_wells": "nearby wellheads reaching below the cell top", "porosity": "percent", "co2_capacity": "kt CO2 per cell"}
 
 
 @router.get("/export")
@@ -254,17 +332,23 @@ def export(region: str = "pilot"):
     from fastapi.responses import FileResponse
 
     d = _dir(region); z = d / "export" / f"{region}_all.zip"  # written by the pipeline's export step (the pod's data mount is read-only)
+    if not z.exists() and _build(d):
+        raise HTTPException(404, "no verified export in this snapshot")
     if not z.exists():
         raise HTTPException(404, f"no export for {region} yet: run EARTH_REGION={region} python -m se.earth.run export")
-    return FileResponse(z, media_type="application/zip", filename=f"earth_{region}.zip")
+    suffix = f"_{_build(d)}" if _build(d) else ""
+    return FileResponse(z, media_type="application/zip", filename=f"earth_{region}{suffix}.zip")
 
 
 @lru_cache(maxsize=8)
-def _map(region: str):
+def _map(d: Path):
     from se.earth.factors import FM, HIGH
     from se.evidence.spatial import project
+    source = d / "map" if _build(d) else FM
+    if not all((source / f).is_file() for f in snapshot.MAP_FILES):
+        raise HTTPException(404, "no FactMaps layers in this snapshot")
 
-    s = _surf(region); x0, x1, y0, y1 = float(s["x"].min()) - 30, float(s["x"].max()) + 30, float(s["y"].min()) - 30, float(s["y"].max()) + 30
+    s = _load_surfaces(d); x0, x1, y0, y1 = float(s["x"].min()) - 30, float(s["x"].max()) + 30, float(s["y"].min()) - 30, float(s["y"].max()) + 30
     ok = lambda p: (p[:, 0] >= x0) & (p[:, 0] <= x1) & (p[:, 1] >= y0) & (p[:, 1] <= y1)
 
     def lines(coords):  # project, keep the parts inside the box, thin to about 1 km
@@ -282,9 +366,9 @@ def _map(region: str):
             xs.append(None); ys.append(None)
         return {"x": xs, "y": ys}
 
-    f = json.loads((FM / "faults_and_boundaries.geojson").read_text())
+    f = json.loads((source / "faults_and_boundaries.geojson").read_text())
     faults = lines([ft["geometry"]["coordinates"] for ft in f["features"] if ft["geometry"] and ft["properties"].get("TEMA_DEF") == "faults"])
-    e = json.loads((FM / "structural_elements.geojson").read_text()); rings, names = [], []
+    e = json.loads((source / "structural_elements.geojson").read_text()); rings, names = [], []
     for ft in e["features"]:
         g = ft["geometry"]; polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
         for poly in polys:
@@ -300,7 +384,7 @@ def _map(region: str):
 @router.get("/map")
 def map_layers(region: str = "pilot"):
     """Map layers for the 3D earth view, in EPSG:3035 km: mapped faults and structural element outlines with their names (P10, owner)."""
-    return _map(region)
+    return _map(_dir(region))
 
 
 @router.get("/observed")
@@ -316,7 +400,7 @@ def observed(t: str, region: str = "pilot", units: str = "", limit: int = 20000)
     if units:
         o = o[o.unit.isin(units.split(","))]
     o = o.sort_values("w", ascending=False).head(limit)
-    return {"target": t, "n": int(len(o)), "x": _r(o.px, 2), "y": _r(o.py, 2), "top": _r(o.top_tvdss, 0), "base": _r(o.bot_tvdss, 0), "ev": _r(o.ev, 3), "w": _r(o.w, 2),
+    return {"build": _build(EARTH), "target": t, "n": int(len(o)), "x": _r(o.px, 2), "y": _r(o.py, 2), "top": _r(o.top_tvdss, 0), "base": _r(o.bot_tvdss, 0), "ev": _r(o.ev, 3), "w": _r(o.w, 2),
             "wellbore": o.wellbore.tolist(), "unit": o.unit.tolist()}
 
 
@@ -338,7 +422,7 @@ def sensitivity():
     """P12.1: each untested constant set low and high, per built region; and the P12.2-P12.3 checks from the target reports."""
     out = []
     for r in REGIONS:
-        d = OUT / "earth" / r
+        d = _resolve(r)
         if not (d / "sensitivity.json").exists():
             continue
         rep = json.loads((d / "targets" / "report.json").read_text()) if (d / "targets" / "report.json").exists() else {}

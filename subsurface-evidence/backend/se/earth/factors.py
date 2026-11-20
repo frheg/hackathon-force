@@ -20,6 +20,7 @@ so no label of a held-out well can leak through them.
 Legacy wells (P9.3) are per cell and computed with the cells: legacy(C).
 """
 import json
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -204,15 +205,19 @@ def build() -> dict:
     return out
 
 
-_F = {}
+@lru_cache(maxsize=2)
+def _feature_maps(root):
+    with np.load(root / "factors.npz") as f:
+        return dict(f)
 
 
-def at(q: pd.DataFrame, maps: dict | None = None) -> pd.DataFrame:
+def at(q: pd.DataFrame, maps: dict | None = None, *, root=None) -> pd.DataFrame:
     """Factor features at rows with x, y (3035 km) and unit: nearest column; closure of the row's unit (0 if the unit is not there).
     maps: replacement maps (a fold's maturity(), P12.2)."""
-    if "f" not in _F or _F["path"] != EARTH:
-        _F.update(f=dict(np.load(EARTH / "factors.npz")), path=EARTH)
-    f = _F["f"] if not maps else {**_F["f"], **maps}; x, y = q.x.to_numpy(float), q.y.to_numpy(float)
+    f = _feature_maps(EARTH if root is None else root)
+    if maps:
+        f = {**f, **maps}
+    x, y = q.x.to_numpy(float), q.y.to_numpy(float)
     i = np.abs(f["x"][None] - x[:, None]).argmin(1); j = np.abs(f["y"][None] - y[:, None]).argmin(1)
     li = {}
     for k, s in enumerate(f["labels"]):
@@ -226,9 +231,9 @@ def at(q: pd.DataFrame, maps: dict | None = None) -> pd.DataFrame:
                          "p_charge": per("p_charge"), "p_charge_max": per("p_charge_max"), "closure_m": c}, index=q.index)
 
 
-def legacy(C: pd.DataFrame) -> np.ndarray:
-    """Per cell: wellbores within LEGACY_KM whose total depth (TVDSS) is below the cell's top, i.e. that drilled through it."""
-    w = pd.read_parquet(EARTH / "wells.parquet").dropna(subset=["x", "y"])
+def legacy(C: pd.DataFrame, *, root=EARTH) -> np.ndarray:
+    """Nearby wellheads with end depth below the cell top; not proven intersections."""
+    w = pd.read_parquet(root / "wells.parquet").dropna(subset=["x", "y"])
     tvd = w.tvd_est.where(w.tvd_est.notna(), w.td) if "tvd_est" in w else w.tvd_td.where(w.tvd_td.notna(), w.td)  # estimated TVD where FactPages has none (frame)
     w = w.assign(z=tvd - w.kb.fillna(0)).dropna(subset=["z"])
     tree = cKDTree(w[["x", "y"]].to_numpy()); z = w.z.to_numpy()
@@ -238,6 +243,11 @@ def legacy(C: pd.DataFrame) -> np.ndarray:
         if nb:
             out[ix] = (z[nb][None] > C.top.to_numpy()[ix][:, None]).sum(1)
     return out
+
+
+def record_legacy(path, root):
+    manifest.write(path, [root / "targets/cells.parquet", root / "wells.parquet"], {"radius_km": LEGACY_KM},
+                   {"output_sha256": manifest.sha256(path)})
 
 
 if __name__ == "__main__":

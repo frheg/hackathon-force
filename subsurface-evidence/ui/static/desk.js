@@ -60,7 +60,7 @@ function mountDesk(pane, readView) {
   };
   const sync = () => {
     const view = readView();
-    scope.textContent = view.view === "earth" ? `earth model · ${view.earth_target} · ${view.region_name || String(view.earth_region).replace(/_/g, " ")} · ${view.cell != null ? "cell " + view.cell : "no cell selected"}`
+    scope.textContent = view.view === "earth" ? `earth model · ${view.earth_target} · ${view.region_name || String(view.earth_region).replace(/_/g, " ")} · ${view.earth_build && view.earth_build !== "legacy" ? view.earth_build : "legacy"} · ${view.cell != null ? "cell " + view.cell : view.earth_wellbore || "no cell selected"}`
       : view.interval ? `${view.target} · ${view.interval.wellbore} · ${view.interval.top_md.toFixed(0)}–${view.interval.base_md.toFixed(0)} m MD` : `${view.target} · ${view.region} · no interval selected`;
   };
   const draft = (q) => { if (!pending) { input.value = q; input.focus(); } };
